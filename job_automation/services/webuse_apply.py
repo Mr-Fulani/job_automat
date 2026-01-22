@@ -247,6 +247,14 @@ class WebUseApplyService(ApplyServiceInterface):
                 # Поиск и клик по кнопке "Откликнуться"
                 self.logger.info("Поиск кнопки 'Откликнуться'...")
                 await self._click_apply_button(page)
+
+                # Проверяем, открылось ли модальное окно для простого отклика
+                modal_opened = await self._handle_modal_response(page, profile, message)
+                if modal_opened:
+                    self.logger.info("Обработка модального окна завершена")
+                    # Сохраняем результат обработки
+                    self._save_processed_vacancy(url, "success", "application submitted via modal", profile.full_name)
+                    return {"status": "success", "message": "application submitted via modal"}
                 self.logger.info("Кнопка 'Откликнуться' нажата")
 
                 # Сохраняем скриншот после клика на отклик
@@ -420,8 +428,9 @@ class WebUseApplyService(ApplyServiceInterface):
                     value = profile.phone
                 elif 'город' in placeholder.lower() or 'city' in name.lower():
                     value = profile.city
-                elif 'сопроводительное' in placeholder.lower() or 'cover' in name.lower():
+                elif 'сопроводительное' in placeholder.lower() or 'cover' in name.lower() or 'letter' in name.lower():
                     value = cover_letter
+                    self.logger.info(f"Найдено поле сопроводительного письма: '{placeholder or name}'")
                 else:
                     # Обработка специфических вопросов работодателя
                     if question_text:
@@ -461,22 +470,6 @@ class WebUseApplyService(ApplyServiceInterface):
 
         # Небольшая пауза перед финальными действиями
         await page.wait_for_timeout(1000)
-
-        # Поиск и заполнение поля сопроводительного письма
-        cover_selectors = [
-            'textarea[placeholder*="сопроводительное"]',
-            'textarea[name*="letter"]',
-            'textarea[data-qa="vacancy-response-letter"]'
-        ]
-        
-        for selector in cover_selectors:
-            try:
-                textarea = await page.wait_for_selector(selector, timeout=3000)
-                if textarea:
-                    await textarea.fill(cover_letter)
-                    break
-            except:
-                continue
         
         # Нажатие кнопки отправки
         submit_selectors = [
@@ -946,6 +939,132 @@ class WebUseApplyService(ApplyServiceInterface):
             return next_text or ""
         except:
             return ""
+
+    async def _handle_modal_response(self, page: Page, profile: CandidateProfile, custom_message: str) -> bool:
+        """
+        Обработка модального окна для простых откликов без дополнительных вопросов.
+
+        Args:
+            page (Page): Экземпляр страницы Playwright
+            profile (CandidateProfile): Данные кандидата
+            custom_message (str): Текст сопроводительного письма
+
+        Returns:
+            bool: True если модальное окно было обработано, False если его нет
+        """
+        try:
+            # Ждем немного для открытия модального окна
+            await page.wait_for_timeout(1000)
+
+            # Ищем селекторы модального окна
+            modal_selectors = [
+                '[data-qa="vacancy-response-popup"]',
+                '.bloko-modal',
+                '.HH-VacancyResponsePopup-Content',
+                '[class*="modal"][class*="response"]',
+                '[class*="popup"][class*="response"]'
+            ]
+
+            modal_found = False
+            for selector in modal_selectors:
+                try:
+                    modal = await page.query_selector(selector)
+                    if modal and await modal.is_visible():
+                        self.logger.info(f"Найдено модальное окно отклика: {selector}")
+                        modal_found = True
+                        break
+                except:
+                    continue
+
+            if not modal_found:
+                self.logger.info("Модальное окно не найдено, продолжаем с обычной формой")
+                return False
+
+            # Обрабатываем модальное окно
+            self.logger.info("Обрабатываем модальное окно простого отклика...")
+
+            # Всегда пытаемся добавить сопроводительное письмо
+            cover_letter_added = False
+
+            # Проверяем, есть ли кнопка "Добавить сопроводительное"
+            cover_button_selectors = [
+                'button[data-qa="vacancy-response-letter-toggle"]',
+                'button:has-text("Добавить сопроводительное")',
+                '[class*="letter"][class*="toggle"]',
+                'button[class*="letter"]'
+            ]
+
+            for selector in cover_button_selectors:
+                try:
+                    button = await page.query_selector(selector)
+                    if button and await button.is_visible():
+                        self.logger.info("Найдена кнопка 'Добавить сопроводительное', нажимаем")
+                        await button.click()
+                        await page.wait_for_timeout(500)
+
+                        # Ищем поле для сопроводительного письма
+                        letter_selectors = [
+                            'textarea[data-qa="vacancy-response-popup-letter"]',
+                            'textarea[class*="letter"]',
+                            'textarea[placeholder*="сопровод"]',
+                            'textarea'
+                        ]
+
+                        for letter_sel in letter_selectors:
+                            try:
+                                textarea = await page.query_selector(letter_sel)
+                                if textarea and await textarea.is_visible():
+                                    # Формируем текст сопроводительного письма
+                                    if custom_message:
+                                        cover_letter = custom_message
+                                    else:
+                                        cover_letter = profile.cover_letter_template.format(
+                                            experience_years=profile.experience_years,
+                                            position=profile.position,
+                                            skills=", ".join(profile.skills[:3])
+                                        )
+
+                                    await textarea.fill(cover_letter)
+                                    self.logger.info(f"✅ Сопроводительное письмо добавлено в модальном окне: '{cover_letter[:50]}...'")
+                                    cover_letter_added = True
+                                    break
+                            except Exception as e:
+                                self.logger.warning(f"Ошибка при заполнении сопроводительного письма: {str(e)}")
+
+                        if cover_letter_added:
+                            break
+                except Exception as e:
+                    self.logger.warning(f"Ошибка с кнопкой сопроводительного письма: {str(e)}")
+
+            if not cover_letter_added:
+                self.logger.info("Кнопка 'Добавить сопроводительное' не найдена или письмо уже добавлено")
+
+            # Ищем и нажимаем кнопку "Откликнуться" в модальном окне
+            submit_selectors = [
+                'button[data-qa="vacancy-response-submit-popup"]',
+                'button:has-text("Откликнуться")',
+                'button[type="submit"]',
+                '.bloko-button_kind-primary'
+            ]
+
+            for selector in submit_selectors:
+                try:
+                    submit_button = await page.query_selector(selector)
+                    if submit_button and await submit_button.is_visible():
+                        self.logger.info(f"Найдена и нажимается кнопка отправки в модальном окне: {selector}")
+                        await submit_button.click()
+                        await page.wait_for_timeout(2000)
+                        self.logger.info("Отклик через модальное окно завершен")
+                        return True
+                except Exception as e:
+                    self.logger.warning(f"Ошибка с кнопкой отправки {selector}: {str(e)}")
+
+            self.logger.warning("Не удалось найти кнопку отправки в модальном окне")
+            return False
+
+        except Exception as e:
+            self.logger.warning(f"Ошибка при обработке модального окна: {str(e)}")
+            return False
 
     async def _save_screenshot(self, page: Page, suffix: str = ""):
         """
