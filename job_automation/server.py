@@ -8,6 +8,7 @@ from pydantic import BaseModel, HttpUrl
 
 from .config import get_settings
 from .services import browser_manager, VacancySearchService, VacancyApplyService
+from .services.webuse_apply import WebUseApplyService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +62,7 @@ app.add_middleware(
 # Экземпляры сервисов
 search_service = VacancySearchService()
 apply_service = VacancyApplyService()
+webuse_apply_service = WebUseApplyService()
 
 
 @app.get("/search")
@@ -97,7 +99,16 @@ async def apply_to_vacancy(request: ApplyRequest) -> ApplyResponse:
     logger.info(f"Apply request: url={request.url}")
     
     try:
-        result = await apply_service.apply(str(request.url), request.message)
+        settings = get_settings()
+        
+        # Выбор сервиса в зависимости от настроек
+        if settings.use_web_use:
+            logger.info("Используем Web-Use сервис")
+            result = await webuse_apply_service.apply(str(request.url), request.message)
+        else:
+            logger.info("Используем стандартный сервис")
+            result = await apply_service.apply(str(request.url), request.message)
+        
         return ApplyResponse(**result)
     except Exception as e:
         logger.error(f"Apply failed: {e}", exc_info=True)
@@ -110,7 +121,8 @@ async def health_check() -> dict:
     return {
         "status": "ok",
         "session_exists": settings.session_file.exists(),
-        "version": "2.0.0"
+        "version": "3.0.0",
+        "web_use_enabled": settings.use_web_use
     }
 
 

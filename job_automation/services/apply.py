@@ -7,6 +7,7 @@ from typing import Optional
 
 from playwright.async_api import Page
 
+from .apply_interface import ApplyServiceInterface
 from .browser import browser_manager
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ class ApplyResult:
         return {"status": self.status.value, "message": self.message}
 
 
-class VacancyApplyService:
+class VacancyApplyService(ApplyServiceInterface):
     """Сервис для отклика на вакансии на HH.ru."""
 
     async def _check_bot_protection(self, page: Page) -> bool:

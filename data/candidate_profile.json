@@ -1,0 +1,20 @@
+{
+  "full_name": "Mr. Fulani",
+  "email": "fulani.dev@gmail.com",
+  "phone": "+90 552 528 14 97",
+  "city": "Стамбул",
+  "birth_date": "1990-01-01",
+  "experience_years": 5,
+  "position": "Python разработчик",
+  "skills": ["Django", "FastAPI", "PostgreSQL", "Docker", "Docker-Compose", "asyncio", "Redis", "Git", "GitHub", "GitLab", "asyncio"],
+  "work_format": ["удалёнка", "гибрид"],
+  "salary_expectations": "200 000 – 300 000 ₽",
+  "cover_letter_template": "Привет! У меня {experience_years} лет опыта в {position}. Стек: {skills}. Готов выйти на проект.",
+  "answers": {
+    "готов к командировкам": "Да",
+    "возраст": "33",
+    "гражданство рф": "Да",
+    "уровень английского": "A2",
+    "образование": "Высшее техническое"
+  }
+}

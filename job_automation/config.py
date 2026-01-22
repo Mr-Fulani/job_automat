@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     browser_headless: bool = Field(default=True, alias="BROWSER_HEADLESS")
     browser_slow_mo: int = Field(default=0, alias="BROWSER_SLOW_MO")
     page_timeout: int = Field(default=30000, alias="PAGE_TIMEOUT")
+    
+    # Настройки Web-Use
+    use_web_use: bool = Field(default=False, alias="USE_WEB_USE")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    webuse_timeout: int = Field(default=90, alias="WEBUSE_TIMEOUT")
+    webuse_max_steps: int = Field(default=15, alias="WEBUSE_MAX_STEPS")
 
     @property
     def session_file(self) -> Path:
