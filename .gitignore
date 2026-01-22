@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+
+# Environment / Credentials
+.env
+.flaskenv
+hh_session.json
+*.session
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs & Debug
+*.log
+*.html
+*.json
+!HH.ru Flow (With Delay).json
+!HH.ru Flow (With AI and Pagination).json
+!package.json

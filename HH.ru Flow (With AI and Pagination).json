@@ -1,0 +1,473 @@
+{
+  "name": "HH.ru Flow (With AI and Pagination)",
+  "nodes": [
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "search_query",
+              "stringValue": "Python Developer"
+            },
+            {
+              "name": "max_pages",
+              "stringValue": "1"
+            },
+            {
+              "name": "current_page",
+              "stringValue": "0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cfa3d009-0caf-4f76-943f-0befd0904c89",
+      "name": "Initialize Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        1376,
+        1072
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://127.0.0.1:8000/search?text={{ $json.search_query }}&page={{ $json.current_page }}",
+        "options": {}
+      },
+      "id": "ad60fd39-f443-49f6-bf26-0fb6788e5cf2",
+      "name": "Search Vacancies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1600,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "24f9beee-5f18-4734-82c1-d88ddfcb7006",
+      "name": "Has Results?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2048,
+        928
+      ],
+      "id": "cc238ae4-5a65-4535-b35d-ebcc019b33c3",
+      "name": "Loop Over Vacancies"
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "prompt",
+              "stringValue": "=Сгенерируй ОЧЕНЬ короткое сопроводительное письмо для отклика на вакансию.\n\nВходные данные:\nНазвание вакансии: {{ $json.title }}\nКомпания: {{ $json.employer }}\nОписание/требования: {{ $json.description }}\n\nЖёсткие требования:\n- 2–3 предложения, не больше\n- Без приветствий и подписей\n- Без фраз: «с большим интересом», «уверен», «буду рад», «внести вклад»\n- Текст должен выглядеть как написанный человеком, не HR и не нейросетью\n- Прямо укажи, что есть релевантный опыт по вакансии {{ $json.title }}\n- Профессионально, но разговорно\n- Только финальный текст письма\n- Никаких комментариев, пояснений или советов\n- Русский язык\n- не оставляй в конце системный комментарий с [Ваше имя]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "90af5311-f1c2-49f9-8e4d-dc0850113613",
+      "name": "Prepare AI Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        2272,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/apply",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"message\": \"{{ $json.text }}\"\n}",
+        "options": {}
+      },
+      "id": "1f149c7f-aa8d-4a38-a35d-aa3953a9fcb7",
+      "name": "Apply to Vacancy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3072,
+        800
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "464e15b9-2108-4813-90e4-0ce6dafe737e",
+      "name": "Wait 5s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        3296,
+        928
+      ],
+      "webhookId": "07d53079-a877-4024-a6d2-9c602f6af740"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Merge').item.json.current_page + 1 }}",
+              "rightValue": "={{ $('Merge').item.json.max_pages }}",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              },
+              "id": "29322ea1-90c1-4dba-86fc-f770a4a4548b"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c20a34e9-32aa-4412-987f-3a4826320255",
+      "name": "More Pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "current_page",
+              "stringValue": "={{ $('Merge').item.json.current_page + 1 }}"
+            },
+            {
+              "name": "search_query",
+              "stringValue": "={{ $('Merge').item.json.search_query }}"
+            },
+            {
+              "name": "max_pages",
+              "stringValue": "={{ $('Merge').item.json.max_pages }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "968a678f-1863-46cc-98a6-1e3b6b1b6dba",
+      "name": "Increment Page",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        3744,
+        928
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1152,
+        1072
+      ],
+      "id": "03d87698-7ef8-42ce-9965-3ccfc3975fbd",
+      "name": "Start Workflow"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "id": "a5f30a81-a451-45d2-81ec-3e549a2573cb",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        3968,
+        1168
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        2496,
+        800
+      ],
+      "id": "53688241-99ba-4a91-b6c7-a6a6ceacc80e",
+      "name": "Basic LLM Chain",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2496,
+        992
+      ],
+      "id": "8ba80dda-cda2-49be-a88b-f8ac7b556943",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "UJQiAUzmwRJh7xoK",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "url",
+              "stringValue": "={{ $('Loop Over Vacancies').item.json.url }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1f7ea3cb-c9d7-43c5-aba7-2881043c0f01",
+      "name": "Prepare Apply Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        2848,
+        800
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Start Workflow": {
+      "main": [
+        [
+          {
+            "node": "Initialize Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Settings": {
+      "main": [
+        [
+          {
+            "node": "Search Vacancies",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Search Vacancies": {
+      "main": [
+        [
+          {
+            "node": "Has Results?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Results?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Vacancies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Vacancies": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply to Vacancy": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5s": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Vacancies",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "More Pages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Pages?": {
+      "main": [
+        [
+          {
+            "node": "Increment Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment Page": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Search Vacancies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Prepare Apply Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Apply Data": {
+      "main": [
+        [
+          {
+            "node": "Apply to Vacancy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionOrder": "v1"
+  },
+  "versionId": "6913564d-2d79-4f90-a6d6-851f38f9609a",
+  "meta": {
+    "templateId": "6270",
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0f08ebc03a369d41fff9f667e70b78d30fb91f59659b2d7ca766a3769fc4fbb8"
+  },
+  "id": "ZemlS1AR13IkbIpJ",
+  "tags": []
+}
