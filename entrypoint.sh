@@ -6,11 +6,11 @@ if [ ! -f "/app/data/hh_session.json" ]; then
     echo "ВНИМАНИЕ: Файл сессии не найден!"
     echo "Для работы автоматизации необходимо один раз войти в HH.ru."
     echo "Пожалуйста, выполните команду в новом окне терминала:"
-    echo "docker exec -it hh-automation python -m hh_automation.cli.login"
+    echo "docker exec -it hh-automation python -m job_automation.cli.login"
     echo "--------------------------------------------------------"
 else
     echo "Сессия найдена. Запуск сервера..."
 fi
 
 # Запускаем основной процесс сервера
-exec python -m hh_automation.server
+exec python -m job_automation.server

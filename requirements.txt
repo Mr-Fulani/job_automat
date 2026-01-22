@@ -12,8 +12,8 @@ pydantic>=2.5.0
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
 
-# Web-Use for autonomous form filling
-web-use @ git+https://github.com/CursorTouch/Web-Use.git@main
-
 # OpenAI API
 openai>=1.30.0
+
+# Web-Use for autonomous form filling (install manually)
+# web-use @ git+https://github.com/CursorTouch/Web-Use.git@main

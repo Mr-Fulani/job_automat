@@ -31,7 +31,7 @@ class BrowserManager:
                 logger.info("Starting Playwright...")
                 self._playwright = await async_playwright().start()
                 self._browser = await self._playwright.chromium.launch(
-                    headless=self._settings.browser_headless,
+                    headless=False,  # Принудительно ВИДИМЫЙ браузер
                     slow_mo=self._settings.browser_slow_mo
                 )
                 logger.info("Browser launched successfully")

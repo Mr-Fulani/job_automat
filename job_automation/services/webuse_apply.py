@@ -39,12 +39,16 @@ class WebUseApplyService(ApplyServiceInterface):
     Обрабатывает сложные формы с дополнительными вопросами работодателя,
     автоматически отвечает на типичные вопросы о опыте работы, зарплатных ожиданиях
     и подтверждает достоверность предоставленных данных.
+
+    Использует систему готовых ответов для экономии токенов AI.
     """
-    
+
     def __init__(self):
         self.settings = get_settings()
         self.openai_client = AsyncOpenAI(api_key=self.settings.openai_api_key)
         self._setup_logging()
+        self._load_common_questions()
+        self._load_processed_vacancies()
     
     def _setup_logging(self):
         """Настройка логирования с ротацией."""
@@ -69,6 +73,53 @@ class WebUseApplyService(ApplyServiceInterface):
         )
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
+
+    def _load_common_questions(self):
+        """
+        Загрузка файла с часто задаваемыми вопросами и готовыми ответами.
+
+        Этот файл позволяет экономить токены AI, используя готовые ответы
+        вместо генерации через GPT для типичных вопросов.
+        """
+        self.common_questions = {}
+        questions_file = Path("data/common_questions.json")
+
+        try:
+            if questions_file.exists():
+                with open(questions_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.common_questions = data.get('questions', {})
+                    metadata = data.get('metadata', {})
+                    self.logger.info(f"Загружено {len(self.common_questions)} готовых ответов на вопросы (v{metadata.get('version', 'N/A')})")
+            else:
+                self.logger.warning("Файл common_questions.json не найден, будут использоваться только базовые ответы")
+        except Exception as e:
+            self.logger.error(f"Ошибка загрузки common_questions.json: {str(e)}")
+            self.common_questions = {}
+
+    def _load_processed_vacancies(self):
+        """
+        Загрузка файла с обработанными вакансиями.
+
+        Этот файл предотвращает повторную обработку одних и тех же вакансий,
+        экономя время и ресурсы.
+        """
+        self.processed_vacancies = {}
+        processed_file = Path("data/processed_vacancies.json")
+
+        try:
+            if processed_file.exists():
+                with open(processed_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.processed_vacancies = data.get('vacancies', {})
+                    metadata = data.get('metadata', {})
+                    total_processed = len(self.processed_vacancies)
+                    self.logger.info(f"Загружено {total_processed} обработанных вакансий")
+            else:
+                self.logger.info("Файл processed_vacancies.json не найден, будет создан новый")
+        except Exception as e:
+            self.logger.error(f"Ошибка загрузки processed_vacancies.json: {str(e)}")
+            self.processed_vacancies = {}
     
     async def load_profile(self) -> CandidateProfile:
         """
@@ -119,6 +170,18 @@ class WebUseApplyService(ApplyServiceInterface):
         try:
             self.logger.info(f"Начало отклика на вакансию: {url}")
 
+            # Проверка, была ли вакансия уже обработана
+            is_processed, processed_data = self._is_vacancy_processed(url)
+            if is_processed:
+                status = processed_data.get('status', 'unknown')
+                processed_at = processed_data.get('processed_at', 'unknown')
+                self.logger.info(f"Вакансия уже была обработана ранее (статус: {status}, время: {processed_at})")
+                return {
+                    "status": "already_processed",
+                    "message": f"Vacancy was already processed on {processed_at} with status: {status}",
+                    "previous_result": processed_data
+                }
+
             # Загрузка профиля
             self.logger.info("Загрузка профиля кандидата...")
             profile = await self.load_profile()
@@ -157,6 +220,7 @@ class WebUseApplyService(ApplyServiceInterface):
                 # Проверяем авторизацию
                 if not await self._is_logged_in(page):
                     self.logger.error("Пользователь не авторизован. Нужно обновить сессию.")
+                    self._save_processed_vacancy(url, "error", "session expired - need to login again")
                     return {"status": "error", "message": "session expired - need to login again"}
 
                 # Небольшая пауза
@@ -177,6 +241,7 @@ class WebUseApplyService(ApplyServiceInterface):
                 self.logger.info("Проверка на наличие капчи...")
                 if await self._is_captcha_present(page):
                     self.logger.warning("Обнаружена капча, пропуск вакансии")
+                    self._save_processed_vacancy(url, "skipped", "captcha detected", profile.full_name)
                     return {"status": "skipped", "message": "captcha detected"}
 
                 # Поиск и клик по кнопке "Откликнуться"
@@ -196,13 +261,18 @@ class WebUseApplyService(ApplyServiceInterface):
                     self.logger.info("Форма успешно заполнена и отправлена")
                     # Ждем 5 секунд для наблюдения результата
                     await asyncio.sleep(5)
+
+                    # Сохраняем результат обработки
+                    self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
                     return {"status": "success", "message": "application submitted"}
                 else:
                     self.logger.error("Не удалось заполнить форму")
+                    self._save_processed_vacancy(url, "error", "form filling failed", profile.full_name)
                     return {"status": "error", "message": "form filling failed"}
 
         except Exception as e:
             self.logger.error(f"Ошибка при отклике: {str(e)}")
+            self._save_processed_vacancy(url, "error", str(e))
             return {"status": "error", "message": str(e)}
     
     async def _is_captcha_present(self, page: Page) -> bool:
@@ -580,10 +650,11 @@ class WebUseApplyService(ApplyServiceInterface):
 
     def _get_answer_for_question(self, question_text: str, name: str, profile: CandidateProfile) -> str:
         """
-        Получение ответа на вопрос работодателя на основе данных профиля.
+        Получение ответа на вопрос работодателя с использованием готовых ответов.
 
-        Анализирует текст вопроса и возвращает подходящий ответ из профиля кандидата.
-        Поддерживает типичные вопросы: опыт работы, навыки, зарплатные ожидания.
+        Сначала проверяет готовые ответы из файла common_questions.json,
+        затем использует данные профиля кандидата для персонализации.
+        Это позволяет экономить токены AI на типичных вопросах.
 
         Args:
             question_text (str): Текст вопроса
@@ -593,29 +664,45 @@ class WebUseApplyService(ApplyServiceInterface):
         Returns:
             str: Подходящий ответ или пустая строка если вопрос не распознан
         """
-        """Получение ответа на вопрос работодателя."""
-        question_text = (placeholder + " " + name).lower().strip()
+        if not question_text:
+            return ""
+
+        question_text_lower = question_text.lower()
+
+        # Сначала проверяем готовые ответы из файла
+        best_match = self._find_best_question_match(question_text_lower)
+        if best_match:
+            question_data = self.common_questions[best_match]
+            answer_template = question_data['answer']
+
+            # Подставляем данные из профиля в шаблон
+            answer = self._format_answer_template(answer_template, profile)
+            self.logger.info(f"✅ Найден готовый ответ для вопроса: '{question_text[:50]}...' -> '{answer}'")
+            return answer
+
+        # Если готовый ответ не найден, используем старую логику для обратной совместимости
+        self.logger.info(f"🔍 Готовый ответ не найден, анализирую вопрос: '{question_text[:50]}...'")
 
         # Коммерческий опыт в Python
-        if 'python' in question_text and ('опыт' in question_text or 'experience' in question_text):
+        if 'python' in question_text_lower and ('опыт' in question_text_lower or 'experience' in question_text_lower):
             return f"{profile.experience_years} лет коммерческого опыта в разработке на Python"
 
         # Опыт разработки на Java
-        if 'java' in question_text and ('опыт' in question_text or 'experience' in question_text):
+        if 'java' in question_text_lower and ('опыт' in question_text_lower or 'experience' in question_text_lower):
             has_java = any('java' in skill.lower() for skill in profile.skills)
             return "Да, есть опыт разработки на Java" if has_java else "Нет опыта разработки на Java"
 
         # Зарплатные ожидания
-        if 'зарплат' in question_text or 'salary' in question_text or 'сумм' in question_text:
+        if 'зарплат' in question_text_lower or 'salary' in question_text_lower or 'сумм' in question_text_lower:
             return profile.salary_expectations
 
         # Подтверждение достоверности данных
-        if 'подтверждаете' in question_text or 'достоверн' in question_text:
+        if 'подтверждаете' in question_text_lower or 'достоверн' in question_text_lower:
             return "Да, подтверждаю достоверность указанных данных"
 
         # Проверяем готовые ответы из профиля
         for key, answer in profile.answers.items():
-            if key.lower() in question_text:
+            if key.lower() in question_text_lower:
                 return answer
 
         return ""
@@ -632,6 +719,142 @@ class WebUseApplyService(ApplyServiceInterface):
             return profile.salary_expectations
 
         return ""
+
+    def _find_best_question_match(self, question_text: str) -> str:
+        """
+        Поиск лучшего совпадения вопроса с готовыми ответами.
+
+        Args:
+            question_text (str): Текст вопроса в нижнем регистре
+
+        Returns:
+            str: Ключ лучшего совпадения или пустая строка
+        """
+        best_match = ""
+        best_score = 0
+
+        for key, question_data in self.common_questions.items():
+            patterns = question_data.get('patterns', [])
+            priority = question_data.get('priority', 5)
+
+            for pattern in patterns:
+                # Простой поиск подстроки с учетом приоритета
+                if pattern.lower() in question_text:
+                    score = len(pattern) * priority  # Чем длиннее паттерн и выше приоритет, тем лучше
+                    if score > best_score:
+                        best_score = score
+                        best_match = key
+
+        return best_match
+
+    def _format_answer_template(self, template: str, profile: CandidateProfile) -> str:
+        """
+        Форматирование шаблона ответа с данными из профиля кандидата.
+
+        Args:
+            template (str): Шаблон ответа с плейсхолдерами
+            profile (CandidateProfile): Данные кандидата
+
+        Returns:
+            str: Отформатированный ответ
+        """
+        # Создаем словарь с данными профиля для подстановки
+        profile_data = {
+            'experience_years': profile.experience_years,
+            'salary_expectations': profile.salary_expectations,
+            'position': profile.position,
+            'skills': ', '.join(profile.skills[:3]),  # Первые 3 навыка
+            'full_name': profile.full_name,
+            'email': profile.email,
+            'phone': profile.phone,
+            'city': profile.city
+        }
+
+        # Добавляем данные из answers профиля
+        profile_data.update(profile.answers)
+
+        try:
+            return template.format(**profile_data)
+        except KeyError as e:
+            self.logger.warning(f"Не удалось подставить данные в шаблон: {e}, шаблон: {template}")
+            return template
+
+    def _is_vacancy_processed(self, url: str) -> tuple[bool, dict]:
+        """
+        Проверка, была ли вакансия уже обработана.
+
+        Args:
+            url (str): URL вакансии
+
+        Returns:
+            tuple[bool, dict]: (обработана ли, данные обработки)
+        """
+        vacancy_id = self._extract_vacancy_id(url)
+        if vacancy_id in self.processed_vacancies:
+            return True, self.processed_vacancies[vacancy_id]
+        return False, {}
+
+    def _save_processed_vacancy(self, url: str, status: str, message: str = "", profile_name: str = ""):
+        """
+        Сохранение результата обработки вакансии.
+
+        Args:
+            url (str): URL вакансии
+            status (str): Статус обработки (success, error, skipped, already_processed)
+            message (str): Сообщение с результатом
+            profile_name (str): Имя профиля, использованного для отклика
+        """
+        vacancy_id = self._extract_vacancy_id(url)
+
+        vacancy_data = {
+            "url": url,
+            "vacancy_id": vacancy_id,
+            "status": status,
+            "message": message,
+            "processed_at": datetime.now().isoformat(),
+            "profile_used": profile_name or "default"
+        }
+
+        self.processed_vacancies[vacancy_id] = vacancy_data
+
+        # Сохраняем в файл
+        try:
+            processed_file = Path("data/processed_vacancies.json")
+            data = {
+                "vacancies": self.processed_vacancies,
+                "metadata": {
+                    "version": "1.0",
+                    "description": "Отслеживание обработанных вакансий для избежания дублирования",
+                    "created": "2026-01-22",
+                    "total_processed": len(self.processed_vacancies),
+                    "last_updated": datetime.now().isoformat()
+                }
+            }
+
+            with open(processed_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            self.logger.info(f"Сохранен статус вакансии {vacancy_id}: {status}")
+        except Exception as e:
+            self.logger.error(f"Ошибка сохранения processed_vacancies.json: {str(e)}")
+
+    def _extract_vacancy_id(self, url: str) -> str:
+        """
+        Извлечение ID вакансии из URL.
+
+        Args:
+            url (str): URL вакансии
+
+        Returns:
+            str: ID вакансии
+        """
+        # Пример URL: https://hh.ru/vacancy/129713934
+        if '/vacancy/' in url:
+            parts = url.split('/vacancy/')
+            if len(parts) > 1:
+                vacancy_id = parts[1].split('?')[0].split('/')[0]  # Убираем параметры и слэши
+                return vacancy_id
+        return url  # Если не удалось извлечь, возвращаем полный URL
 
     async def _handle_radio_buttons(self, page: Page, profile: CandidateProfile):
         """
