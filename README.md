@@ -237,6 +237,55 @@ python -m hh_automation.server
 2. Добавьте Google Gemini API credentials в n8n (Settings → Credentials)
 3. Запустите workflow
 
+#### Полезные команды (локальный прогон без Docker/n8n)
+
+Для локального тестирования отклика через Playwright (видимый браузер / повторные прогоны) используйте `run_local_automation.py`.
+
+**Отклик по одной вакансии (прямая ссылка):**
+```bash
+python run_local_automation.py --url "https://hh.ru/vacancy/123456" --message "Здравствуйте! ..." --keep-open 30
+```
+
+**Форсировать повторный отклик по уже обработанной вакансии:**
+```bash
+python run_local_automation.py --url "https://hh.ru/vacancy/123456" --force --message "Здравствуйте! ..."
+```
+
+**Отклик на несколько вакансий по поиску:**
+```bash
+python run_local_automation.py --query "Python разработчик" --pages 2 --max 10 --delay 3 --message "Здравствуйте! ..."
+```
+
+**Оставить браузер открытым после выполнения (секунды):**
+```bash
+python run_local_automation.py --url "https://hh.ru/vacancy/123456" --keep-open 120
+```
+
+**Очистка папки logs (скриншоты/логи):**
+```bash
+python run_local_automation.py --cleanup-logs
+```
+
+**Очистка logs с лимитами (по возрасту и по количеству файлов):**
+```bash
+python run_local_automation.py --cleanup-logs --logs-keep-days 7 --logs-keep-files 200
+```
+
+#### Циклический запуск (3 отклика -> пауза 2 минуты -> снова 3)
+
+Для непрерывного прогона откликов с паузами используйте `run_cycle_automation.py`.
+Он делает отклик батчами и держит браузер открытым между батчами (без пересоздания на каждую вакансию).
+
+**Пример: 3 успешных отклика, затем пауза 120 секунд, повторять бесконечно:**
+```bash
+python run_cycle_automation.py --query "Python разработчик" --pages 2 --max 20 --batch-success 3 --pause 120 --delay 3 --message "Здравствуйте! ..."
+```
+
+**Ограничить количеством циклов (например 5):**
+```bash
+python run_cycle_automation.py --cycles 5 --batch-success 3 --pause 120
+```
+
 ## API Endpoints
 
 ### GET /search

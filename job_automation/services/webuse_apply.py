@@ -73,7 +73,134 @@ class WebUseApplyService(ApplyServiceInterface):
             log_file, maxBytes=10*1024*1024, backupCount=10, encoding='utf-8'
         )
         file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
+        if not any(isinstance(h, RotatingFileHandler) for h in self.logger.handlers):
+            self.logger.addHandler(file_handler)
+
+        # Console handler (реал-тайм вывод в терминал)
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        if not any(isinstance(h, logging.StreamHandler) for h in self.logger.handlers):
+            self.logger.addHandler(stream_handler)
+
+    async def apply_with_page(self, page: Page, url: str, message: str = "") -> dict:
+        try:
+            self.logger.info(f"Начало отклика на вакансию: {url}")
+
+            force_apply = False
+            try:
+                if "force=1" in url:
+                    force_apply = True
+            except Exception:
+                force_apply = False
+
+            if not force_apply:
+                is_processed, processed_data = self._is_vacancy_processed(url)
+                if is_processed:
+                    status = processed_data.get('status', 'unknown')
+                    processed_at = processed_data.get('processed_at', 'unknown')
+                    if str(status).lower() != "error":
+                        self.logger.info(f"Вакансия уже была обработана ранее (статус: {status}, время: {processed_at})")
+                        return {
+                            "status": "already_processed",
+                            "message": f"Vacancy was already processed on {processed_at} with status: {status}",
+                            "previous_result": processed_data
+                        }
+                    self.logger.info(f"Повторная попытка для вакансии после ошибки (время: {processed_at})")
+            else:
+                self.logger.info("force=1: пропускаем проверку processed_vacancies")
+
+            self.logger.info("Загрузка профиля кандидата...")
+            profile = await self.load_profile()
+            self.logger.info(f"Профиль загружен: {profile.full_name}")
+
+            self.logger.info("Переход на главную страницу HH.ru...")
+            try:
+                await page.goto("https://hh.ru", timeout=30000)
+                await page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception as e:
+                self.logger.warning(f"Не удалось загрузить главную страницу, пробуем без ожидания: {str(e)}")
+
+            if not await self._is_logged_in(page):
+                self.logger.error("Пользователь не авторизован. Нужно обновить сессию.")
+                self._save_processed_vacancy(url, "error", "session expired - need to login again")
+                return {"status": "error", "message": "session expired - need to login again"}
+
+            await page.wait_for_timeout(2000)
+
+            self.logger.info(f"Переход на страницу вакансии: {url}")
+            await page.goto(url, timeout=120000)
+            self.logger.info("Ожидание загрузки страницы...")
+            try:
+                await page.wait_for_load_state('domcontentloaded', timeout=self.settings.page_timeout)
+            except Exception as e:
+                self.logger.warning(f"domcontentloaded не дождались: {str(e)}")
+            try:
+                await page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception:
+                pass
+            self.logger.info("Страница загружена")
+
+            self.logger.info("Сохранение скриншота после загрузки страницы...")
+            await self._save_screenshot(page, "after_page_load")
+
+            self.logger.info("Проверка на наличие капчи...")
+            if await self._is_captcha_present(page):
+                self.logger.warning("Обнаружена капча, пропуск вакансии")
+                self._save_processed_vacancy(url, "skipped", "captcha detected", profile.full_name)
+                return {"status": "skipped", "message": "captcha detected"}
+
+            if "/applicant/vacancy_response" in url:
+                self.logger.info("Обнаружена страница формы отклика (vacancy_response), переходим к заполнению формы")
+                self.logger.info("Сохранение скриншота после загрузки формы отклика...")
+                await self._save_screenshot(page, "response_form_loaded")
+
+                self.logger.info("Заполнение формы отклика...")
+                success = await self._fill_application_form(page, profile, message)
+                if success:
+                    self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
+                    return {"status": "success", "message": "application submitted"}
+
+                self._save_processed_vacancy(url, "error", "failed to submit application", profile.full_name)
+                return {"status": "error", "message": "failed to submit application"}
+
+            try:
+                if await page.locator("text=Вы откликнулись").count() > 0:
+                    self.logger.info("Вы уже откликнулись на эту вакансию")
+                    self._save_processed_vacancy(url, "skipped", "already applied", profile.full_name)
+                    return {"status": "skipped", "message": "already applied"}
+            except Exception:
+                pass
+
+            self.logger.info("Поиск кнопки 'Откликнуться'...")
+            await self._click_apply_button(page)
+
+            modal_opened = await self._handle_modal_response(page, profile, message)
+            if modal_opened:
+                self.logger.info("Обработка модального окна завершена")
+                self._save_processed_vacancy(url, "success", "application submitted via modal", profile.full_name)
+                return {"status": "success", "message": "application submitted via modal"}
+            self.logger.info("Кнопка 'Откликнуться' нажата")
+
+            self.logger.info("Сохранение скриншота после клика на отклик...")
+            await self._save_screenshot(page, "after_apply_click")
+
+            self.logger.info("Заполнение формы отклика...")
+            success = await self._fill_application_form(page, profile, message)
+
+            if success:
+                self.logger.info("Форма успешно заполнена и отправлена")
+                await asyncio.sleep(5)
+                self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
+                return {"status": "success", "message": "application submitted"}
+
+            self.logger.error("Не удалось заполнить форму")
+            self._save_processed_vacancy(url, "error", "form filling failed", profile.full_name)
+            return {"status": "error", "message": "form filling failed"}
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при отклике: {str(e)}")
+            self._save_processed_vacancy(url, "error", str(e))
+            return {"status": "error", "message": str(e)}
 
     def _load_common_questions(self):
         """
@@ -168,152 +295,10 @@ class WebUseApplyService(ApplyServiceInterface):
         Raises:
             Exception: При критических ошибках (сетевые проблемы, отсутствие сессии)
         """
-        try:
-            self.logger.info(f"Начало отклика на вакансию: {url}")
-
-            force_apply = False
-            try:
-                if "force=1" in url:
-                    force_apply = True
-            except Exception:
-                force_apply = False
-
-            # Проверка, была ли вакансия уже обработана
-            if not force_apply:
-                is_processed, processed_data = self._is_vacancy_processed(url)
-                if is_processed:
-                    status = processed_data.get('status', 'unknown')
-                    processed_at = processed_data.get('processed_at', 'unknown')
-                    # Разрешаем повторить попытку, если прошлый раз была ошибка
-                    if str(status).lower() != "error":
-                        self.logger.info(f"Вакансия уже была обработана ранее (статус: {status}, время: {processed_at})")
-                        return {
-                            "status": "already_processed",
-                            "message": f"Vacancy was already processed on {processed_at} with status: {status}",
-                            "previous_result": processed_data
-                        }
-                    self.logger.info(f"Повторная попытка для вакансии после ошибки (время: {processed_at})")
-            else:
-                self.logger.info("force=1: пропускаем проверку processed_vacancies")
-
-            # Загрузка профиля
-            self.logger.info("Загрузка профиля кандидата...")
-            profile = await self.load_profile()
-            self.logger.info(f"Профиль загружен: {profile.full_name}")
-            
-            # Использование browser_manager для получения страницы
-            self.logger.info("Инициализация браузерного контекста...")
-            from .browser import browser_manager
-            async with browser_manager.get_page(use_session=True) as page:
-                self.logger.info("Браузерная страница создана")
-
-                # Сначала переходим на главную страницу HH.ru
-                self.logger.info("Переход на главную страницу HH.ru...")
-                try:
-                    await page.goto("https://hh.ru", timeout=30000)
-                    await page.wait_for_load_state('networkidle', timeout=15000)
-                except Exception as e:
-                    self.logger.warning(f"Не удалось загрузить главную страницу, пробуем без ожидания: {str(e)}")
-                    # Продолжаем без полной загрузки главной страницы
-
-                # Проверяем авторизацию
-                if not await self._is_logged_in(page):
-                    self.logger.error("Пользователь не авторизован. Нужно обновить сессию.")
-                    self._save_processed_vacancy(url, "error", "session expired - need to login again")
-                    return {"status": "error", "message": "session expired - need to login again"}
-
-                # Небольшая пауза
-                await page.wait_for_timeout(2000)
-
-                # Теперь переходим на страницу вакансии
-                self.logger.info(f"Переход на страницу вакансии: {url}")
-                await page.goto(url, timeout=120000)  # 120 секунд
-                self.logger.info("Ожидание загрузки страницы...")
-                # networkidle на hh.ru часто не наступает из-за фоновых запросов, поэтому ждём более устойчиво
-                try:
-                    await page.wait_for_load_state('domcontentloaded', timeout=self.settings.page_timeout)
-                except Exception as e:
-                    self.logger.warning(f"domcontentloaded не дождались: {str(e)}")
-                try:
-                    await page.wait_for_load_state('networkidle', timeout=15000)
-                except Exception:
-                    pass
-                self.logger.info("Страница загружена")
-                
-                # Сохраняем скриншот после загрузки страницы
-                self.logger.info("Сохранение скриншота после загрузки страницы...")
-                await self._save_screenshot(page, "after_page_load")
-
-                # Проверка на капчу
-                self.logger.info("Проверка на наличие капчи...")
-                if await self._is_captcha_present(page):
-                    self.logger.warning("Обнаружена капча, пропуск вакансии")
-                    self._save_processed_vacancy(url, "skipped", "captcha detected", profile.full_name)
-                    return {"status": "skipped", "message": "captcha detected"}
-
-                # Если это прямая ссылка на форму отклика, не ищем кнопку "Откликнуться"
-                if "/applicant/vacancy_response" in url:
-                    self.logger.info("Обнаружена страница формы отклика (vacancy_response), переходим к заполнению формы")
-
-                    self.logger.info("Сохранение скриншота после загрузки формы отклика...")
-                    await self._save_screenshot(page, "response_form_loaded")
-
-                    self.logger.info("Заполнение формы отклика...")
-                    success = await self._fill_application_form(page, profile, message)
-                    if success:
-                        self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
-                        return {"status": "success", "message": "application submitted"}
-
-                    self._save_processed_vacancy(url, "error", "failed to submit application", profile.full_name)
-                    return {"status": "error", "message": "failed to submit application"}
-
-                # Быстрые проверки, почему кнопки может не быть
-                try:
-                    if await page.locator("text=Вы откликнулись").count() > 0:
-                        self.logger.info("Вы уже откликнулись на эту вакансию")
-                        self._save_processed_vacancy(url, "skipped", "already applied", profile.full_name)
-                        return {"status": "skipped", "message": "already applied"}
-                except Exception:
-                    pass
-
-                # Поиск и клик по кнопке "Откликнуться"
-                self.logger.info("Поиск кнопки 'Откликнуться'...")
-                await self._click_apply_button(page)
-
-                # Проверяем, открылось ли модальное окно для простого отклика
-                modal_opened = await self._handle_modal_response(page, profile, message)
-                if modal_opened:
-                    self.logger.info("Обработка модального окна завершена")
-                    # Сохраняем результат обработки
-                    self._save_processed_vacancy(url, "success", "application submitted via modal", profile.full_name)
-                    return {"status": "success", "message": "application submitted via modal"}
-                self.logger.info("Кнопка 'Откликнуться' нажата")
-
-                # Сохраняем скриншот после клика на отклик
-                self.logger.info("Сохранение скриншота после клика на отклик...")
-                await self._save_screenshot(page, "after_apply_click")
-
-                # Заполнение формы через Web-Use
-                self.logger.info("Заполнение формы отклика...")
-                success = await self._fill_application_form(page, profile, message)
-                
-                if success:
-                    self.logger.info("Форма успешно заполнена и отправлена")
-                    # Ждем 5 секунд для наблюдения результата
-                    await asyncio.sleep(5)
-
-                    # Сохраняем результат обработки
-                    self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
-                    return {"status": "success", "message": "application submitted"}
-                else:
-                    self.logger.error("Не удалось заполнить форму")
-                    self._save_processed_vacancy(url, "error", "form filling failed", profile.full_name)
-                    return {"status": "error", "message": "form filling failed"}
-
-        except Exception as e:
-            self.logger.error(f"Ошибка при отклике: {str(e)}")
-            self._save_processed_vacancy(url, "error", str(e))
-            return {"status": "error", "message": str(e)}
+        from .browser import browser_manager
+        async with browser_manager.get_page(use_session=True) as page:
+            self.logger.info("Браузерная страница создана")
+            return await self.apply_with_page(page, url, message)
     
     async def _is_captcha_present(self, page: Page) -> bool:
         """Проверка наличия капчи на странице."""
