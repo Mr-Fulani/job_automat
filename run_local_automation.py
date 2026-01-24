@@ -14,6 +14,22 @@ from job_automation.services.webuse_apply import WebUseApplyService
 from job_automation.services.browser import browser_manager
 
 
+def _exc_message(e: Exception) -> str:
+    return f"{type(e).__name__}: {e}".strip()
+
+
+def _safe_save_processed(
+    store: "ProcessedVacanciesStore",
+    vacancy_url: str,
+    status: str,
+    message: str,
+) -> None:
+    try:
+        store.save(vacancy_url, status=status, message=message)
+    except Exception:
+        pass
+
+
 def _cleanup_logs(logs_dir: Path, keep_days: int, keep_files: int) -> tuple[int, int]:
     if not logs_dir.exists() or not logs_dir.is_dir():
         return 0, 0
@@ -189,14 +205,14 @@ async def run(
                             else:
                                 result = await standard_service.apply(url, message)  # type: ignore[union-attr]
 
-                            status = str(result.get("status", "unknown"))
-                            msg = str(result.get("message", ""))
+                            status = str((result or {}).get("status", "unknown"))
+                            msg = str((result or {}).get("message", ""))
                             print(f"[result] {status} - {msg}")
-                            processed_store.save(url, status=status, message=msg)
+                            _safe_save_processed(processed_store, url, status=status, message=msg)
                             if status == "success":
                                 applied_count += 1
                         except Exception as e:
-                            processed_store.save(url, status="error", message=str(e))
+                            _safe_save_processed(processed_store, url, status="error", message=_exc_message(e))
             else:
                 print("[force] bypass processed checks")
                 seen += 1
@@ -209,14 +225,14 @@ async def run(
                     else:
                         result = await standard_service.apply(url, message)  # type: ignore[union-attr]
 
-                    status = str(result.get("status", "unknown"))
-                    msg = str(result.get("message", ""))
+                    status = str((result or {}).get("status", "unknown"))
+                    msg = str((result or {}).get("message", ""))
                     print(f"[result] {status} - {msg}")
-                    processed_store.save(url, status=status, message=msg)
+                    _safe_save_processed(processed_store, url, status=status, message=msg)
                     if status == "success":
                         applied_count += 1
                 except Exception as e:
-                    processed_store.save(url, status="error", message=str(e))
+                    _safe_save_processed(processed_store, url, status="error", message=_exc_message(e))
 
             print(f"[done] processed={seen} success={applied_count}")
             if keep_open_seconds > 0:
@@ -226,7 +242,11 @@ async def run(
 
         for page_num in range(max_pages):
             print(f"[search] page={page_num} query='{query}'")
-            results = await search_service.search(query=query, page_num=page_num, include_descriptions=False)
+            try:
+                results = await search_service.search(query=query, page_num=page_num, include_descriptions=False)
+            except Exception as e:
+                print(f"[search-error] {type(e).__name__}: {e}")
+                break
             if not results:
                 print("[search] no results")
                 break
@@ -267,18 +287,18 @@ async def run(
                         print(f"[apply] {url}")
                         result = await standard_service.apply(url, message)  # type: ignore[union-attr]
 
-                    status = str(result.get("status", "unknown"))
-                    msg = str(result.get("message", ""))
+                    status = str((result or {}).get("status", "unknown"))
+                    msg = str((result or {}).get("message", ""))
 
                     print(f"[result] {status} - {msg}")
 
-                    processed_store.save(url, status=status, message=msg)
+                    _safe_save_processed(processed_store, url, status=status, message=msg)
 
                     if status == "success":
                         applied_count += 1
 
                 except Exception as e:
-                    processed_store.save(url, status="error", message=str(e))
+                    _safe_save_processed(processed_store, url, status="error", message=_exc_message(e))
 
                 if delay_seconds > 0:
                     await asyncio.sleep(delay_seconds)
