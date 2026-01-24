@@ -320,6 +320,15 @@ chmod +x ./start-project.sh
 ./start-project.sh
 ```
 
+По умолчанию скрипт запускается в **headless** режиме (`BROWSER_HEADLESS=true`).
+Для отладки с видимым браузером:
+```bash
+./start-project.sh --visible
+```
+
+Все логи запуска дополнительно пишутся в файл:
+`logs/run_cycle_YYYY-MM-DD_HH-MM-SS.log`
+
 Пример с параметрами:
 ```bash
 ./start-project.sh --success 10 --pause 3600 --query "Python разработчик" --pages 2 --max 50 --delay 3

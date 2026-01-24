@@ -10,6 +10,7 @@ DELAY=3
 MESSAGE=""
 CYCLES=0
 FORCE=""
+VISIBLE=0
 
 usage() {
   cat <<EOF
@@ -25,6 +26,7 @@ Options:
   --message TEXT     Сопроводительное письмо
   --cycles N         Кол-во циклов (0 = бесконечно)
   --force            Форсировать отклик (обходит processed)
+  --visible          Включить видимый браузер (BROWSER_HEADLESS=false)
   -h, --help         Показать помощь
 
 Examples:
@@ -54,6 +56,8 @@ while [[ $# -gt 0 ]]; do
       CYCLES="$2"; shift 2;;
     --force)
       FORCE="--force"; shift 1;;
+    --visible)
+      VISIBLE=1; shift 1;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -70,6 +74,17 @@ if [[ -x ".venv/bin/python" ]]; then
   PYTHON_BIN=".venv/bin/python"
 fi
 
+# Production-friendly defaults
+export PYTHONUNBUFFERED=1
+if [[ "${VISIBLE}" -eq 1 ]]; then
+  export BROWSER_HEADLESS=false
+else
+  export BROWSER_HEADLESS=true
+fi
+
+mkdir -p logs
+RUN_LOG="logs/run_cycle_$(date +%Y-%m-%d_%H-%M-%S).log"
+
 # If message is empty, pass nothing.
 MSG_ARGS=()
 if [[ -n "${MESSAGE}" ]]; then
@@ -85,4 +100,5 @@ exec "${PYTHON_BIN}" run_cycle_automation.py \
   --delay "${DELAY}" \
   ${FORCE} \
   --cycles "${CYCLES}" \
-  "${MSG_ARGS[@]}"
+  "${MSG_ARGS[@]}" \
+  2>&1 | tee -a "${RUN_LOG}"
