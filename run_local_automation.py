@@ -75,6 +75,8 @@ async def run(
     delay_seconds: float,
     message: str,
     keep_open_seconds: float,
+    url: str,
+    force: bool,
 ) -> None:
     settings = get_settings()
 
@@ -92,6 +94,46 @@ async def run(
 
     applied_count = 0
     seen = 0
+
+    if url:
+        url = url.strip()
+        if force:
+            # Не ломаем сигнатуры сервисов: используем query param для режима форсированного прогона
+            if "force=1" not in url:
+                url = url + ("&" if "?" in url else "?") + "force=1"
+        print(f"[apply-direct] {url}")
+        if not force:
+            is_done, done_data = processed_store.is_processed(url)
+            if is_done:
+                prev_status = str(done_data.get("status", ""))
+                if prev_status and prev_status != "error":
+                    print(f"[skip] already processed ({prev_status})")
+                    return
+                if prev_status == "error":
+                    print("[retry] previously error, retrying")
+        else:
+            print("[force] bypass processed checks")
+
+        try:
+            if webuse_service is not None:
+                result = await webuse_service.apply(url, message)
+            else:
+                result = await standard_service.apply(url, message)  # type: ignore[union-attr]
+
+            status = str(result.get("status", "unknown"))
+            msg = str(result.get("message", ""))
+            print(f"[result] {status} - {msg}")
+            processed_store.save(url, status=status, message=msg)
+            if status == "success":
+                applied_count += 1
+        except Exception as e:
+            processed_store.save(url, status="error", message=str(e))
+
+        print(f"[done] processed=1 success={applied_count}")
+        if keep_open_seconds > 0:
+            print(f"[keep-open] sleeping {keep_open_seconds} seconds")
+            await asyncio.sleep(keep_open_seconds)
+        return
 
     for page_num in range(max_pages):
         print(f"[search] page={page_num} query='{query}'")
@@ -156,6 +198,8 @@ async def run(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--query", default=None)
+    parser.add_argument("--url", default="")
+    parser.add_argument("--force", action="store_true")
     parser.add_argument("--pages", type=int, default=1)
     parser.add_argument("--max", dest="max_vacancies", type=int, default=10)
     parser.add_argument("--delay", type=float, default=3.0)
@@ -175,6 +219,8 @@ def main() -> None:
             delay_seconds=max(0.0, args.delay),
             message=args.message,
             keep_open_seconds=max(0.0, args.keep_open_seconds),
+            url=str(args.url or ""),
+            force=bool(args.force),
         )
     )
 

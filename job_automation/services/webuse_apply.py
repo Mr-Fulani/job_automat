@@ -170,20 +170,30 @@ class WebUseApplyService(ApplyServiceInterface):
         try:
             self.logger.info(f"Начало отклика на вакансию: {url}")
 
+            force_apply = False
+            try:
+                if "force=1" in url:
+                    force_apply = True
+            except Exception:
+                force_apply = False
+
             # Проверка, была ли вакансия уже обработана
-            is_processed, processed_data = self._is_vacancy_processed(url)
-            if is_processed:
-                status = processed_data.get('status', 'unknown')
-                processed_at = processed_data.get('processed_at', 'unknown')
-                # Разрешаем повторить попытку, если прошлый раз была ошибка
-                if str(status).lower() != "error":
-                    self.logger.info(f"Вакансия уже была обработана ранее (статус: {status}, время: {processed_at})")
-                    return {
-                        "status": "already_processed",
-                        "message": f"Vacancy was already processed on {processed_at} with status: {status}",
-                        "previous_result": processed_data
-                    }
-                self.logger.info(f"Повторная попытка для вакансии после ошибки (время: {processed_at})")
+            if not force_apply:
+                is_processed, processed_data = self._is_vacancy_processed(url)
+                if is_processed:
+                    status = processed_data.get('status', 'unknown')
+                    processed_at = processed_data.get('processed_at', 'unknown')
+                    # Разрешаем повторить попытку, если прошлый раз была ошибка
+                    if str(status).lower() != "error":
+                        self.logger.info(f"Вакансия уже была обработана ранее (статус: {status}, время: {processed_at})")
+                        return {
+                            "status": "already_processed",
+                            "message": f"Vacancy was already processed on {processed_at} with status: {status}",
+                            "previous_result": processed_data
+                        }
+                    self.logger.info(f"Повторная попытка для вакансии после ошибки (время: {processed_at})")
+            else:
+                self.logger.info("force=1: пропускаем проверку processed_vacancies")
 
             # Загрузка профиля
             self.logger.info("Загрузка профиля кандидата...")
@@ -239,6 +249,22 @@ class WebUseApplyService(ApplyServiceInterface):
                     self.logger.warning("Обнаружена капча, пропуск вакансии")
                     self._save_processed_vacancy(url, "skipped", "captcha detected", profile.full_name)
                     return {"status": "skipped", "message": "captcha detected"}
+
+                # Если это прямая ссылка на форму отклика, не ищем кнопку "Откликнуться"
+                if "/applicant/vacancy_response" in url:
+                    self.logger.info("Обнаружена страница формы отклика (vacancy_response), переходим к заполнению формы")
+
+                    self.logger.info("Сохранение скриншота после загрузки формы отклика...")
+                    await self._save_screenshot(page, "response_form_loaded")
+
+                    self.logger.info("Заполнение формы отклика...")
+                    success = await self._fill_application_form(page, profile, message)
+                    if success:
+                        self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
+                        return {"status": "success", "message": "application submitted"}
+
+                    self._save_processed_vacancy(url, "error", "failed to submit application", profile.full_name)
+                    return {"status": "error", "message": "failed to submit application"}
 
                 # Быстрые проверки, почему кнопки может не быть
                 try:
@@ -382,8 +408,7 @@ class WebUseApplyService(ApplyServiceInterface):
         try:
             # Здесь будет интеграция с Web-Use
             # Временно используем базовую логику заполнения
-            await self._basic_form_fill(page, profile, cover_letter)
-            return True
+            return await self._basic_form_fill(page, profile, cover_letter)
             
         except Exception as e:
             self.logger.error(f"Ошибка заполнения формы: {str(e)}")
@@ -437,6 +462,46 @@ class WebUseApplyService(ApplyServiceInterface):
             cover_letter (str): Текст сопроводительного письма
         """
 
+        # На некоторых формах ответы спрятаны, пока не выбран вариант "Свой вариант"
+        # Сначала раскрываем такие поля, чтобы они попали в общий список input/textarea
+        try:
+            own_option_selectors = [
+                'label:has-text("Свой вариант")',
+                'button:has-text("Свой вариант")',
+                'a:has-text("Свой вариант")',
+                'div[role="radio"]:has-text("Свой вариант")',
+                'span[role="radio"]:has-text("Свой вариант")',
+                'div:has-text("Свой вариант")',
+                'span:has-text("Свой вариант")',
+            ]
+            clicked_any = False
+            for sel in own_option_selectors:
+                try:
+                    loc = page.locator(sel)
+                    cnt = await loc.count()
+                    if cnt == 0:
+                        continue
+                    for i in range(min(cnt, 5)):
+                        try:
+                            el = loc.nth(i)
+                            if not await el.is_visible():
+                                continue
+                            try:
+                                await el.scroll_into_view_if_needed()
+                            except Exception:
+                                pass
+                            await el.click()
+                            clicked_any = True
+                            await page.wait_for_timeout(200)
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+            if clicked_any:
+                self.logger.info("✅ Выбраны варианты 'Свой вариант' для раскрытия скрытых полей")
+        except Exception:
+            pass
+
         # Пытаемся раскрыть блок сопроводительного письма (на HH он часто скрыт за тогглом)
         await self._try_open_cover_letter_block(page)
 
@@ -457,12 +522,22 @@ class WebUseApplyService(ApplyServiceInterface):
             'textarea[name*="letter"]',
             'textarea[placeholder="Сопроводительное письмо"]',
             'textarea[placeholder*="сопровод"]',
+            'xpath=//*[normalize-space()="Сопроводительное письмо"]/following::textarea[1]',
+            'xpath=//*[contains(normalize-space(), "Сопроводительное письмо")]/following::textarea[1]',
+            'xpath=//*[normalize-space()="Сопроводительное письмо"]/following::*[@contenteditable="true"][1]',
+            'xpath=//*[contains(normalize-space(), "Сопроводительное письмо")]/following::*[@contenteditable="true"][1]',
         ]
         for sel in cover_letter_selectors:
             try:
                 loc = page.locator(sel)
                 if await loc.count() > 0 and await loc.first.is_visible():
-                    await loc.first.fill(cover_letter)
+                    # contenteditable элементы не поддерживают fill()
+                    try:
+                        await loc.first.fill(cover_letter)
+                    except Exception:
+                        await loc.first.click()
+                        await page.keyboard.press("Meta+A")
+                        await page.keyboard.type(cover_letter)
                     await page.wait_for_timeout(300)
                     cover_letter_filled = True
                     self.logger.info(f"✅ Сопроводительное письмо заполнено: {sel}")
@@ -480,7 +555,12 @@ class WebUseApplyService(ApplyServiceInterface):
                 try:
                     loc = page.locator(sel)
                     if await loc.count() > 0 and await loc.first.is_visible():
-                        await loc.first.fill(cover_letter)
+                        try:
+                            await loc.first.fill(cover_letter)
+                        except Exception:
+                            await loc.first.click()
+                            await page.keyboard.press("Meta+A")
+                            await page.keyboard.type(cover_letter)
                         await page.wait_for_timeout(300)
                         cover_letter_filled = True
                         self.logger.info(f"✅ Сопроводительное письмо заполнено (2-я попытка): {sel}")
@@ -623,8 +703,7 @@ class WebUseApplyService(ApplyServiceInterface):
 
         self.logger.error("Не найдена ни одна кнопка отправки формы!")
         return False
-        
-        return False
+
 
     async def _try_open_cover_letter_block(self, page: Page) -> bool:
         """Пытается раскрыть блок/поле сопроводительного письма (если оно скрыто за кнопкой/ссылкой)."""
@@ -634,8 +713,17 @@ class WebUseApplyService(ApplyServiceInterface):
             'a:has-text("Сопроводительное письмо")',
             'div:has-text("Сопроводительное письмо")',
             'span:has-text("Сопроводительное письмо")',
+            # На некоторых формах рядом с заголовком есть отдельная кнопка "Добавить"
+            'xpath=//*[normalize-space()="Сопроводительное письмо"]/following::*[(self::button or self::a or self::div or self::span) and normalize-space()="Добавить"][1]',
+            'xpath=//*[contains(normalize-space(), "Сопроводительное письмо")]/following::*[(self::button or self::a or self::div or self::span) and normalize-space()="Добавить"][1]',
+            'xpath=//*[normalize-space()="Сопроводительное письмо"]/following::*[@role="button" and normalize-space()="Добавить"][1]',
+            'xpath=//*[contains(normalize-space(), "Сопроводительное письмо")]/following::*[@role="button" and normalize-space()="Добавить"][1]',
             'button:has-text("Добавить сопроводительное")',
             'a:has-text("Добавить сопроводительное")',
+            'div[role="button"]:has-text("Добавить")',
+            'span[role="button"]:has-text("Добавить")',
+            'div:has-text("Добавить")',
+            'span:has-text("Добавить")',
         ]
 
         for sel in toggle_selectors:
@@ -824,6 +912,26 @@ class WebUseApplyService(ApplyServiceInterface):
 
         question_text_lower = question_text.lower()
 
+        # Явные правила для типовых вопросов с вариантами Да/Нет (radio)
+        # (нужно возвращать текст, который максимально совпадает с label опции)
+        if 'трудоустройств' in question_text_lower and ('тк' in question_text_lower or 'рф' in question_text_lower):
+            return "Да"
+
+        if ('fastapi' in question_text_lower or 'starlette' in question_text_lower or 'aiohttp' in question_text_lower) and 'опыт' in question_text_lower:
+            return "Да, FastAPI или Starlette или aiohttp"
+
+        if 'websocket' in question_text_lower and 'опыт' in question_text_lower:
+            return "Да"
+
+        if 'asyncio' in question_text_lower and 'опыт' in question_text_lower:
+            return "Да"
+
+        if 'rust' in question_text_lower and ('инструмент' in question_text_lower or 'библиотек' in question_text_lower or 'crate' in question_text_lower):
+            return "Использовал Cargo и crates.io; для async — tokio, для HTTP — reqwest, для сериализации — serde, для логирования — tracing/log, для тестов — встроенный test/criterion, для CLI — clap. Есть опыт настройки clippy/rustfmt и CI."
+
+        if ('разниц' in question_text_lower and 'экземпляр' in question_text_lower and 'класс' in question_text_lower and 'статическ' in question_text_lower and 'python' in question_text_lower):
+            return "Метод экземпляра (self) работает с данными объекта. Метод класса (@classmethod, cls) работает с классом и часто используется для альтернативных конструкторов/фабрик. Статический метод (@staticmethod) не получает ни self, ни cls и является логически связанной с классом функцией-утилитой."
+
         # Сначала проверяем готовые ответы из файла
         best_match = self._find_best_question_match(question_text_lower)
         if best_match:
@@ -1009,6 +1117,16 @@ class WebUseApplyService(ApplyServiceInterface):
             if len(parts) > 1:
                 vacancy_id = parts[1].split('?')[0].split('/')[0]  # Убираем параметры и слэши
                 return vacancy_id
+
+        # Пример URL: https://hh.ru/applicant/vacancy_response?vacancyId=129815486&...
+        if 'vacancyId=' in url:
+            try:
+                after = url.split('vacancyId=', 1)[1]
+                vacancy_id = after.split('&')[0].split('#')[0]
+                if vacancy_id:
+                    return vacancy_id
+            except Exception:
+                pass
         return url  # Если не удалось извлечь, возвращаем полный URL
 
     async def _handle_radio_buttons(self, page: Page, profile: CandidateProfile):
@@ -1062,6 +1180,148 @@ class WebUseApplyService(ApplyServiceInterface):
 
             if not found_any:
                 self.logger.warning("❌ Не найдено подходящих чекбоксов/radio buttons для подтверждения данных")
+
+            # Отдельно: отвечаем на группы radio (Да/Нет/Свой вариант) по тексту вопроса
+            try:
+                radios = await page.query_selector_all('input[type="radio"]')
+                by_name: dict[str, list] = {}
+                for r in radios:
+                    try:
+                        if not await r.is_visible():
+                            continue
+                        name = await r.get_attribute('name') or ""
+                        if not name:
+                            continue
+                        by_name.setdefault(name, []).append(r)
+                    except Exception:
+                        continue
+
+                for name, group in by_name.items():
+                    try:
+                        if not group:
+                            continue
+                        # если уже выбран вариант, но он не совпадает с желаемым — переопределяем
+                        checked_label = ""
+                        for r in group:
+                            try:
+                                if await r.is_checked():
+                                    checked_label = (await self._get_radio_label_text(page, r) or "").strip()
+                                    break
+                            except Exception:
+                                continue
+
+                        # Пытаемся восстановить текст вопроса по одному из элементов группы
+                        question_text = ""
+                        try:
+                            question_text = await self._find_question_text(page, group[0])
+                        except Exception:
+                            question_text = ""
+
+                        desired = self._get_answer_for_question(question_text, name, profile)
+                        desired_lower = (desired or "").strip().lower()
+
+                        picked = False
+                        # 1) пытаемся выбрать по точному совпадению текста label
+                        if desired_lower:
+                            for r in group:
+                                try:
+                                    label_text = (await self._get_radio_label_text(page, r) or "").strip()
+                                    if label_text and desired_lower in label_text.lower():
+                                        # Если уже выбран правильный вариант — ок
+                                        if checked_label and desired_lower in checked_label.lower():
+                                            picked = True
+                                            break
+                                        await r.check()
+                                        self.logger.info(f"✅ Выбран radio-ответ: вопрос='{question_text[:60]}...', вариант='{label_text[:60]}...'")
+                                        picked = True
+                                        break
+                                except Exception:
+                                    continue
+
+                        # 2) фолбэк: выбираем первый вариант, содержащий "да"
+                        if not picked:
+                            # Если уже выбран "да" — не трогаем
+                            if checked_label and 'да' in checked_label.lower():
+                                picked = True
+                            
+                            for r in group:
+                                try:
+                                    label_text = (await self._get_radio_label_text(page, r) or "").strip().lower()
+                                    value_text = (await r.get_attribute('value') or "").strip().lower()
+                                    if not picked and ('да' in label_text or value_text == 'да'):
+                                        await r.check()
+                                        self.logger.info(f"✅ Выбран radio-ответ (fallback Да): вопрос='{question_text[:60]}...'")
+                                        picked = True
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        continue
+
+                # Отдельно: подтверждающие чекбоксы ("прочел описание", "понятно", "согласен" и т.п.)
+                try:
+                    checkboxes = await page.query_selector_all('input[type="checkbox"]')
+                    for cb in checkboxes:
+                        try:
+                            if not await cb.is_visible():
+                                continue
+                            try:
+                                if not await cb.is_enabled():
+                                    continue
+                            except Exception:
+                                pass
+
+                            label_text = (await self._get_radio_label_text(page, cb) or "").strip()
+                            label_lower = label_text.lower()
+
+                            should_check = (
+                                'подтвержда' in label_lower or
+                                'достоверн' in label_lower or
+                                'проч' in label_lower or
+                                'ознаком' in label_lower or
+                                'мне понятно' in label_lower or
+                                ('понятно' in label_lower and 'ожидан' in label_lower) or
+                                'соглас' in label_lower
+                            )
+
+                            if should_check and not await cb.is_checked():
+                                checked = False
+                                try:
+                                    await cb.check()
+                                    checked = await cb.is_checked()
+                                except Exception:
+                                    checked = False
+
+                                if not checked:
+                                    try:
+                                        cb_id = await cb.get_attribute('id') or ""
+                                        if cb_id:
+                                            label_loc = page.locator(f'label[for="{cb_id}"]')
+                                            if await label_loc.count() > 0 and await label_loc.first.is_visible():
+                                                await label_loc.first.click()
+                                                checked = await cb.is_checked()
+                                    except Exception:
+                                        pass
+
+                                if not checked:
+                                    try:
+                                        parent_label = await cb.query_selector('xpath=ancestor::label[1]')
+                                        if parent_label and await parent_label.is_visible():
+                                            await parent_label.click()
+                                            checked = await cb.is_checked()
+                                    except Exception:
+                                        pass
+
+                                if checked:
+                                    self.logger.info(f"✅ Отмечен чекбокс: '{label_text[:80]}...'")
+                                else:
+                                    self.logger.warning(f"❌ Не удалось отметить чекбокс: '{label_text[:80]}...'")
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+            except Exception as e:
+                self.logger.warning(f"Ошибка обработки radio-групп: {str(e)}")
 
         except Exception as e:
             self.logger.warning(f"Ошибка обработки radio buttons: {str(e)}")
@@ -1148,55 +1408,85 @@ class WebUseApplyService(ApplyServiceInterface):
             # Всегда пытаемся добавить сопроводительное письмо
             cover_letter_added = False
 
+            # Иногда textarea уже раскрыта без клика по "Добавить"
+            letter_selectors = [
+                'textarea[data-qa="vacancy-response-popup-letter"]',
+                'textarea[placeholder="Сопроводительное письмо"]',
+                'textarea[class*="letter"]',
+                'textarea[placeholder*="сопровод"]',
+                'textarea'
+            ]
+
+            for letter_sel in letter_selectors:
+                try:
+                    textarea = await page.query_selector(letter_sel)
+                    if textarea and await textarea.is_visible():
+                        if custom_message:
+                            cover_letter = custom_message
+                        else:
+                            cover_letter = profile.cover_letter_template.format(
+                                experience_years=profile.experience_years,
+                                position=profile.position,
+                                skills=", ".join(profile.skills[:3])
+                            )
+                        await textarea.fill(cover_letter)
+                        self.logger.info(f"✅ Сопроводительное письмо добавлено в модальном окне: '{cover_letter[:50]}...'")
+                        cover_letter_added = True
+                        break
+                except Exception:
+                    continue
+
             # Проверяем, есть ли кнопка "Добавить сопроводительное"
             cover_button_selectors = [
                 'button[data-qa="vacancy-response-letter-toggle"]',
                 'button:has-text("Добавить сопроводительное")',
                 'button:has-text("Сопроводительное письмо")',
                 '[class*="letter"][class*="toggle"]',
-                'button[class*="letter"]'
+                'button[class*="letter"]',
+                'a:has-text("Добавить")',
+                'button:has-text("Добавить")',
+                'div[role="button"]:has-text("Добавить")',
+                'span[role="button"]:has-text("Добавить")',
+                'xpath=//*[normalize-space()="Сопроводительное письмо"]/following::*[(self::button or self::a or self::div or self::span) and normalize-space()="Добавить"][1]',
+                'xpath=//*[contains(normalize-space(), "Сопроводительное письмо")]/following::*[(self::button or self::a or self::div or self::span) and normalize-space()="Добавить"][1]',
             ]
 
             for selector in cover_button_selectors:
                 try:
+                    if cover_letter_added:
+                        break
                     button = await page.query_selector(selector)
                     if button and await button.is_visible():
                         self.logger.info("Найдена кнопка 'Добавить сопроводительное', нажимаем")
+                        try:
+                            await button.scroll_into_view_if_needed()
+                        except Exception:
+                            pass
                         await button.click()
                         await page.wait_for_timeout(500)
 
-                        # Ищем поле для сопроводительного письма
-                        letter_selectors = [
-                            'textarea[data-qa="vacancy-response-popup-letter"]',
-                            'textarea[placeholder="Сопроводительное письмо"]',
-                            'textarea[class*="letter"]',
-                            'textarea[placeholder*="сопровод"]',
-                            'textarea'
-                        ]
-
+                        # Дожидаемся появления textarea после клика
+                        textarea = None
                         for letter_sel in letter_selectors:
                             try:
-                                textarea = await page.query_selector(letter_sel)
+                                textarea = await page.wait_for_selector(letter_sel, timeout=2000)
                                 if textarea and await textarea.is_visible():
-                                    # Формируем текст сопроводительного письма
-                                    if custom_message:
-                                        cover_letter = custom_message
-                                    else:
-                                        cover_letter = profile.cover_letter_template.format(
-                                            experience_years=profile.experience_years,
-                                            position=profile.position,
-                                            skills=", ".join(profile.skills[:3])
-                                        )
-
-                                    await textarea.fill(cover_letter)
-                                    self.logger.info(f"✅ Сопроводительное письмо добавлено в модальном окне: '{cover_letter[:50]}...'")
-                                    cover_letter_added = True
                                     break
-                            except Exception as e:
-                                self.logger.warning(f"Ошибка при заполнении сопроводительного письма: {str(e)}")
+                            except Exception:
+                                continue
 
-                        if cover_letter_added:
-                            break
+                        if textarea and await textarea.is_visible():
+                            if custom_message:
+                                cover_letter = custom_message
+                            else:
+                                cover_letter = profile.cover_letter_template.format(
+                                    experience_years=profile.experience_years,
+                                    position=profile.position,
+                                    skills=", ".join(profile.skills[:3])
+                                )
+                            await textarea.fill(cover_letter)
+                            self.logger.info(f"✅ Сопроводительное письмо добавлено в модальном окне: '{cover_letter[:50]}...'")
+                            cover_letter_added = True
                 except Exception as e:
                     self.logger.warning(f"Ошибка с кнопкой сопроводительного письма: {str(e)}")
 
