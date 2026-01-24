@@ -68,7 +68,8 @@ class VacancySearchService:
     async def search(
         self,
         query: Optional[str] = None,
-        page_num: int = 0
+        page_num: int = 0,
+        include_descriptions: bool = True
     ) -> list[dict]:
         """
         Поиск вакансий, соответствующих запросу.
@@ -133,17 +134,28 @@ class VacancySearchService:
                     logger.warning(f"Failed to parse vacancy card {i}: {e}")
                     continue
 
-            # Получение полных описаний для каждой вакансии
             vacancies: list[dict] = []
-            for data in vacancy_data:
-                description = await self._get_vacancy_description(page, data["url"])
-                vacancy = Vacancy(
-                    title=data["title"],
-                    url=data["url"],
-                    employer=data["employer"],
-                    description=description
-                )
-                vacancies.append(vacancy.to_dict())
+            if include_descriptions:
+                # Получение полных описаний для каждой вакансии (требует переходов по страницам вакансий)
+                for data in vacancy_data:
+                    description = await self._get_vacancy_description(page, data["url"])
+                    vacancy = Vacancy(
+                        title=data["title"],
+                        url=data["url"],
+                        employer=data["employer"],
+                        description=description
+                    )
+                    vacancies.append(vacancy.to_dict())
+            else:
+                # Быстрый режим: без переходов в каждую вакансию
+                for data in vacancy_data:
+                    vacancy = Vacancy(
+                        title=data["title"],
+                        url=data["url"],
+                        employer=data["employer"],
+                        description=""
+                    )
+                    vacancies.append(vacancy.to_dict())
 
             logger.info(f"Found {len(vacancies)} vacancies")
             return vacancies

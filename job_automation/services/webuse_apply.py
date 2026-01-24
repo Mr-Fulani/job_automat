@@ -175,12 +175,15 @@ class WebUseApplyService(ApplyServiceInterface):
             if is_processed:
                 status = processed_data.get('status', 'unknown')
                 processed_at = processed_data.get('processed_at', 'unknown')
-                self.logger.info(f"Вакансия уже была обработана ранее (статус: {status}, время: {processed_at})")
-                return {
-                    "status": "already_processed",
-                    "message": f"Vacancy was already processed on {processed_at} with status: {status}",
-                    "previous_result": processed_data
-                }
+                # Разрешаем повторить попытку, если прошлый раз была ошибка
+                if str(status).lower() != "error":
+                    self.logger.info(f"Вакансия уже была обработана ранее (статус: {status}, время: {processed_at})")
+                    return {
+                        "status": "already_processed",
+                        "message": f"Vacancy was already processed on {processed_at} with status: {status}",
+                        "previous_result": processed_data
+                    }
+                self.logger.info(f"Повторная попытка для вакансии после ошибки (время: {processed_at})")
 
             # Загрузка профиля
             self.logger.info("Загрузка профиля кандидата...")
@@ -190,23 +193,8 @@ class WebUseApplyService(ApplyServiceInterface):
             # Использование browser_manager для получения страницы
             self.logger.info("Инициализация браузерного контекста...")
             from .browser import browser_manager
-            async with browser_manager.get_interactive_context(headless=False) as (context, page):
-                self.logger.info("Браузерный контекст создан")
-
-                # Загружаем сессию напрямую из файла
-                self.logger.info("Загрузка сессии из файла...")
-                try:
-                    import json
-                    with open(str(self.settings.session_file), 'r') as f:
-                        storage_state = json.load(f)
-
-                    # Добавляем cookies
-                    for cookie in storage_state['cookies']:
-                        await context.add_cookies([cookie])
-
-                    self.logger.info("Сессия загружена успешно")
-                except Exception as e:
-                    self.logger.warning(f"Не удалось загрузить сессию: {e}")
+            async with browser_manager.get_page(use_session=True) as page:
+                self.logger.info("Браузерная страница создана")
 
                 # Сначала переходим на главную страницу HH.ru
                 self.logger.info("Переход на главную страницу HH.ru...")
@@ -230,7 +218,15 @@ class WebUseApplyService(ApplyServiceInterface):
                 self.logger.info(f"Переход на страницу вакансии: {url}")
                 await page.goto(url, timeout=120000)  # 120 секунд
                 self.logger.info("Ожидание загрузки страницы...")
-                await page.wait_for_load_state('networkidle', timeout=60000)  # 60 секунд
+                # networkidle на hh.ru часто не наступает из-за фоновых запросов, поэтому ждём более устойчиво
+                try:
+                    await page.wait_for_load_state('domcontentloaded', timeout=self.settings.page_timeout)
+                except Exception as e:
+                    self.logger.warning(f"domcontentloaded не дождались: {str(e)}")
+                try:
+                    await page.wait_for_load_state('networkidle', timeout=15000)
+                except Exception:
+                    pass
                 self.logger.info("Страница загружена")
                 
                 # Сохраняем скриншот после загрузки страницы
@@ -243,6 +239,15 @@ class WebUseApplyService(ApplyServiceInterface):
                     self.logger.warning("Обнаружена капча, пропуск вакансии")
                     self._save_processed_vacancy(url, "skipped", "captcha detected", profile.full_name)
                     return {"status": "skipped", "message": "captcha detected"}
+
+                # Быстрые проверки, почему кнопки может не быть
+                try:
+                    if await page.locator("text=Вы откликнулись").count() > 0:
+                        self.logger.info("Вы уже откликнулись на эту вакансию")
+                        self._save_processed_vacancy(url, "skipped", "already applied", profile.full_name)
+                        return {"status": "skipped", "message": "already applied"}
+                except Exception:
+                    pass
 
                 # Поиск и клик по кнопке "Откликнуться"
                 self.logger.info("Поиск кнопки 'Откликнуться'...")
@@ -305,22 +310,57 @@ class WebUseApplyService(ApplyServiceInterface):
     async def _click_apply_button(self, page: Page):
         """Поиск и клик по кнопке отклика."""
         apply_selectors = [
+            '[data-qa="vacancy-response-link-top"]',
+            '[data-qa="vacancy-response-link-bottom"]',
+            '[data-qa="vacancy-response-link"]',
+            'button[data-qa="vacancy-response-link"]',
             'button[data-qa="vacancy-response-submit"]',
             'button:has-text("Откликнуться")',
             'a:has-text("Откликнуться")',
-            '[data-qa="vacancy-response-link"]'
         ]
-        
+
         for selector in apply_selectors:
+            locator = page.locator(selector)
             try:
-                button = await page.wait_for_selector(selector, timeout=5000)
-                if button and await button.is_visible():
-                    await button.click()
-                    await page.wait_for_load_state('networkidle')
-                    return
-            except:
+                count = await locator.count()
+            except Exception:
                 continue
-        
+
+            try:
+                self.logger.info(f"Селектор кнопки отклика: {selector} (найдено: {count})")
+            except Exception:
+                pass
+
+            if count == 0:
+                continue
+
+            for i in range(count):
+                el = locator.nth(i)
+                try:
+                    if not await el.is_visible():
+                        continue
+                    try:
+                        await el.scroll_into_view_if_needed()
+                    except Exception:
+                        pass
+
+                    # Для <a> is_enabled может падать, поэтому в try
+                    try:
+                        if not await el.is_enabled():
+                            continue
+                    except Exception:
+                        pass
+
+                    await el.click()
+                    await page.wait_for_timeout(1500)
+                    return
+                except Exception:
+                    continue
+
+        try:
+            await self._save_screenshot(page, "apply_button_not_found")
+        except Exception:
+            pass
         raise Exception("Кнопка отклика не найдена")
     
     async def _fill_application_form(self, page: Page, profile: CandidateProfile, custom_message: str) -> bool:
@@ -397,6 +437,9 @@ class WebUseApplyService(ApplyServiceInterface):
             cover_letter (str): Текст сопроводительного письма
         """
 
+        # Пытаемся раскрыть блок сопроводительного письма (на HH он часто скрыт за тогглом)
+        await self._try_open_cover_letter_block(page)
+
         # Сначала найдем все вопросы на странице
         questions = await self._find_all_questions(page)
         self.logger.info(f"Найдено {len(questions)} вопросов на странице: {[q[:50] + '...' if len(q) > 50 else q for q in questions]}")
@@ -404,6 +447,67 @@ class WebUseApplyService(ApplyServiceInterface):
         # Заполнение текстовых полей и textarea
         text_inputs = await page.query_selector_all('input[type="text"], input[type="email"], input[type="tel"], textarea')
         self.logger.info(f"Найдено {len(text_inputs)} текстовых полей для заполнения")
+
+        # Пытаемся заполнить сопроводительное письмо прицельно (часто это отдельное поле без placeholder)
+        cover_letter_filled = False
+        cover_letter_selectors = [
+            'textarea[data-qa="vacancy-response-popup-form-letter-input"]',
+            'textarea[data-qa="vacancy-response-popup-letter"]',
+            'textarea[data-qa*="letter"]',
+            'textarea[name*="letter"]',
+            'textarea[placeholder="Сопроводительное письмо"]',
+            'textarea[placeholder*="сопровод"]',
+        ]
+        for sel in cover_letter_selectors:
+            try:
+                loc = page.locator(sel)
+                if await loc.count() > 0 and await loc.first.is_visible():
+                    await loc.first.fill(cover_letter)
+                    await page.wait_for_timeout(300)
+                    cover_letter_filled = True
+                    self.logger.info(f"✅ Сопроводительное письмо заполнено: {sel}")
+                    break
+            except Exception:
+                continue
+
+        # Иногда textarea появляется только после клика по тогглу; если не нашли — попробуем ещё раз
+        if not cover_letter_filled:
+            try:
+                await self._try_open_cover_letter_block(page)
+            except Exception:
+                pass
+            for sel in cover_letter_selectors:
+                try:
+                    loc = page.locator(sel)
+                    if await loc.count() > 0 and await loc.first.is_visible():
+                        await loc.first.fill(cover_letter)
+                        await page.wait_for_timeout(300)
+                        cover_letter_filled = True
+                        self.logger.info(f"✅ Сопроводительное письмо заполнено (2-я попытка): {sel}")
+                        break
+                except Exception:
+                    continue
+
+        # Если на форме есть обязательное поле письма, но мы его не заполнили — дальше нет смысла жать отправку
+        if not cover_letter_filled:
+            required_letter_locators = [
+                'textarea[required]',
+                'textarea[aria-required="true"]',
+                'textarea[data-qa*="letter"][required]',
+                'textarea[data-qa*="letter"][aria-required="true"]',
+            ]
+            for sel in required_letter_locators:
+                try:
+                    loc = page.locator(sel)
+                    if await loc.count() > 0 and await loc.first.is_visible():
+                        self.logger.error("❌ Сопроводительное письмо обязательно, но не заполнено")
+                        try:
+                            await self._save_screenshot(page, "required_cover_letter_missing")
+                        except Exception:
+                            pass
+                        return False
+                except Exception:
+                    continue
 
         for i, input_element in enumerate(text_inputs):
             try:
@@ -421,6 +525,10 @@ class WebUseApplyService(ApplyServiceInterface):
                 if not is_visible or not is_enabled:
                     continue
 
+                # Если это поле сопроводительного, но мы его уже заполнили прицельно выше — пропускаем
+                if cover_letter_filled and tag_name == "textarea" and placeholder == "Сопроводительное письмо":
+                    continue
+
                 value = ""
                 if 'email' in name.lower() or 'email' in placeholder.lower():
                     value = profile.email
@@ -430,6 +538,7 @@ class WebUseApplyService(ApplyServiceInterface):
                     value = profile.city
                 elif 'сопроводительное' in placeholder.lower() or 'cover' in name.lower() or 'letter' in name.lower():
                     value = cover_letter
+                    cover_letter_filled = True
                     self.logger.info(f"Найдено поле сопроводительного письма: '{placeholder or name}'")
                 else:
                     # Обработка специфических вопросов работодателя
@@ -486,9 +595,28 @@ class WebUseApplyService(ApplyServiceInterface):
                 if button and await button.is_visible():
                     self.logger.info(f"Найдена и нажимается кнопка отправки: {selector}")
                     await button.click()
-                    await page.wait_for_timeout(2000)
-                    self.logger.info("Кнопка отправки нажата, форма должна быть отправлена")
-                    return True
+                    await page.wait_for_timeout(2500)
+
+                    if await self._is_application_success(page):
+                        self.logger.info("✅ Подтверждение отклика найдено")
+                        return True
+
+                    errors = await self._get_validation_errors(page)
+                    if errors:
+                        self.logger.error(f"❌ Ошибки валидации после отправки: {errors[:3]}")
+                        try:
+                            await self._save_screenshot(page, "validation_errors")
+                        except Exception:
+                            pass
+                        return False
+
+                    # Если нет подтверждения и нет ошибок — считаем неуспехом
+                    self.logger.error("❌ Нет подтверждения отправки отклика")
+                    try:
+                        await self._save_screenshot(page, "no_success_confirmation")
+                    except Exception:
+                        pass
+                    return False
             except Exception as e:
                 self.logger.warning(f"Не удалось найти кнопку {selector}: {str(e)}")
                 continue
@@ -496,6 +624,40 @@ class WebUseApplyService(ApplyServiceInterface):
         self.logger.error("Не найдена ни одна кнопка отправки формы!")
         return False
         
+        return False
+
+    async def _try_open_cover_letter_block(self, page: Page) -> bool:
+        """Пытается раскрыть блок/поле сопроводительного письма (если оно скрыто за кнопкой/ссылкой)."""
+        toggle_selectors = [
+            'button[data-qa="vacancy-response-letter-toggle"]',
+            'button:has-text("Сопроводительное письмо")',
+            'a:has-text("Сопроводительное письмо")',
+            'div:has-text("Сопроводительное письмо")',
+            'span:has-text("Сопроводительное письмо")',
+            'button:has-text("Добавить сопроводительное")',
+            'a:has-text("Добавить сопроводительное")',
+        ]
+
+        for sel in toggle_selectors:
+            try:
+                loc = page.locator(sel)
+                if await loc.count() == 0:
+                    continue
+                el = loc.first
+                if not await el.is_visible():
+                    continue
+                try:
+                    await el.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    await el.click()
+                    await page.wait_for_timeout(400)
+                    return True
+                except Exception:
+                    continue
+            except Exception:
+                continue
         return False
 
     async def _is_logged_in(self, page: Page) -> bool:
@@ -990,6 +1152,7 @@ class WebUseApplyService(ApplyServiceInterface):
             cover_button_selectors = [
                 'button[data-qa="vacancy-response-letter-toggle"]',
                 'button:has-text("Добавить сопроводительное")',
+                'button:has-text("Сопроводительное письмо")',
                 '[class*="letter"][class*="toggle"]',
                 'button[class*="letter"]'
             ]
@@ -1005,6 +1168,7 @@ class WebUseApplyService(ApplyServiceInterface):
                         # Ищем поле для сопроводительного письма
                         letter_selectors = [
                             'textarea[data-qa="vacancy-response-popup-letter"]',
+                            'textarea[placeholder="Сопроводительное письмо"]',
                             'textarea[class*="letter"]',
                             'textarea[placeholder*="сопровод"]',
                             'textarea'
@@ -1054,8 +1218,17 @@ class WebUseApplyService(ApplyServiceInterface):
                         self.logger.info(f"Найдена и нажимается кнопка отправки в модальном окне: {selector}")
                         await submit_button.click()
                         await page.wait_for_timeout(2000)
-                        self.logger.info("Отклик через модальное окно завершен")
-                        return True
+                        if await self._is_application_success(page):
+                            self.logger.info("✅ Отклик через модальное окно подтвержден")
+                            return True
+                        errors = await self._get_validation_errors(page)
+                        if errors:
+                            self.logger.error(f"❌ Ошибки валидации в модальном окне: {errors[:3]}")
+                            try:
+                                await self._save_screenshot(page, "modal_validation_errors")
+                            except Exception:
+                                pass
+                        return False
                 except Exception as e:
                     self.logger.warning(f"Ошибка с кнопкой отправки {selector}: {str(e)}")
 
@@ -1063,8 +1236,49 @@ class WebUseApplyService(ApplyServiceInterface):
             return False
 
         except Exception as e:
-            self.logger.warning(f"Ошибка при обработке модального окна: {str(e)}")
+            self.logger.error(f"Ошибка обработки модального окна: {str(e)}")
             return False
+
+    async def _is_application_success(self, page: Page) -> bool:
+        success_selectors = [
+            'text=Отклик отправлен',
+            'text=Вы откликнулись',
+            'text=Резюме доставлено',
+            'text=Откликнуться ещё раз',
+        ]
+        for sel in success_selectors:
+            try:
+                if await page.locator(sel).count() > 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _get_validation_errors(self, page: Page) -> list[str]:
+        error_texts: list[str] = []
+        selectors = [
+            '[data-qa*="vacancy-response-error"]',
+            '[data-qa*="error"]',
+            '.bloko-form-error',
+            '[class*="error"][class*="message"]',
+            '[aria-invalid="true"]',
+        ]
+        for sel in selectors:
+            try:
+                loc = page.locator(sel)
+                cnt = await loc.count()
+                if cnt == 0:
+                    continue
+                for i in range(min(cnt, 5)):
+                    try:
+                        t = (await loc.nth(i).inner_text()).strip()
+                        if t and t not in error_texts:
+                            error_texts.append(t)
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return error_texts
 
     async def _save_screenshot(self, page: Page, suffix: str = ""):
         """

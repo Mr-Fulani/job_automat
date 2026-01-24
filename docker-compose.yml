@@ -12,6 +12,7 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8000
       - N8N_FILES_DIR=/app/data
+      - BROWSER_HEADLESS=true
     restart: unless-stopped
 
   n8n:
