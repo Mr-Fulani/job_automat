@@ -9,6 +9,7 @@ from run_local_automation import run
 
 
 async def _cycle_loop(
+    user_id: str,
     query: str,
     pages: int,
     max_vacancies: int,
@@ -28,6 +29,7 @@ async def _cycle_loop(
             print(f"\n[cycle] #{cycle_idx} started_at={ts}")
 
             await run(
+                user_id=user_id,
                 query=query,
                 max_pages=max(1, pages),
                 max_vacancies=max(0, max_vacancies),
@@ -54,6 +56,7 @@ async def _cycle_loop(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--user-id", dest="user_id", default="")
     parser.add_argument("--query", default="Python разработчик")
     parser.add_argument("--pages", type=int, default=2)
     parser.add_argument("--max", dest="max_vacancies", type=int, default=20)
@@ -68,6 +71,7 @@ def main() -> None:
 
     asyncio.run(
         _cycle_loop(
+            user_id=str(args.user_id or ""),
             query=str(args.query or ""),
             pages=int(args.pages),
             max_vacancies=int(args.max_vacancies),

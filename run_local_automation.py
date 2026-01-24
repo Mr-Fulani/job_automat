@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -138,10 +139,20 @@ class ProcessedVacanciesStore:
             parts = url.split("/vacancy/")
             if len(parts) > 1:
                 return parts[1].split("?")[0].split("/")[0]
+
+        if "vacancyId=" in url:
+            try:
+                after = url.split("vacancyId=", 1)[1]
+                vacancy_id = after.split("&")[0].split("#")[0]
+                if vacancy_id:
+                    return vacancy_id
+            except Exception:
+                pass
         return url
 
 
 async def run(
+    user_id: str,
     query: str,
     max_pages: int,
     max_vacancies: int,
@@ -153,6 +164,21 @@ async def run(
     force: bool,
     manage_browser: bool = True,
 ) -> None:
+    user_id = str(user_id or "").strip()
+    if user_id:
+        os.environ["SESSION_FILE"] = str(Path("data") / "users" / user_id / "hh_session.json")
+        os.environ["PROCESSED_VACANCIES_FILE"] = str(Path("data") / "users" / user_id / "processed_vacancies.json")
+
+        user_profile_path = Path("data") / "users" / user_id / "candidate_profile.json"
+        if user_profile_path.exists():
+            os.environ["CANDIDATE_PROFILE_FILE"] = str(user_profile_path)
+        else:
+            os.environ.setdefault("CANDIDATE_PROFILE_FILE", str(Path("data") / "candidate_profile.json"))
+        try:
+            get_settings.cache_clear()
+        except Exception:
+            pass
+
     settings = get_settings()
 
     search_service = VacancySearchService()
@@ -165,7 +191,7 @@ async def run(
     else:
         standard_service = VacancyApplyService()
 
-    processed_store = ProcessedVacanciesStore(Path("data/processed_vacancies.json"))
+    processed_store = ProcessedVacanciesStore(Path(settings.processed_vacancies_file))
 
     applied_count = 0
     seen = 0
@@ -322,6 +348,7 @@ async def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--user-id", dest="user_id", default="")
     parser.add_argument("--query", default=None)
     parser.add_argument("--url", default="")
     parser.add_argument("--force", action="store_true")
@@ -347,6 +374,7 @@ def main() -> None:
 
     asyncio.run(
         run(
+            user_id=str(args.user_id or ""),
             query=query,
             max_pages=max(1, args.pages),
             max_vacancies=max(0, args.max_vacancies),

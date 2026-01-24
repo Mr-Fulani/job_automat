@@ -6,6 +6,13 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _default_python_bin() -> str:
+    venv_python = Path(".venv") / "bin" / "python"
+    if venv_python.exists() and venv_python.is_file():
+        return str(venv_python)
+    return "python3"
+
+
 async def _stream_subprocess(prefix: str, stream: asyncio.StreamReader) -> None:
     while True:
         line = await stream.readline()
@@ -115,9 +122,11 @@ def main() -> None:
     parser.add_argument("--no-tail-webuse", action="store_true")
     parser.add_argument("--poll", type=float, default=0.5)
     parser.add_argument("--visible", action="store_true")
+    parser.add_argument("--python", dest="python_bin", type=str, default="")
     args = parser.parse_args()
 
-    server_cmd = ["python3", "-m", "job_automation.server"]
+    python_bin = str(args.python_bin or "").strip() or _default_python_bin()
+    server_cmd = [python_bin, "-u", "-m", "job_automation.server"]
 
     if args.visible:
         print("[info] --visible: установи BROWSER_HEADLESS=false в .env (или экспортируй переменную окружения) для видимого браузера")

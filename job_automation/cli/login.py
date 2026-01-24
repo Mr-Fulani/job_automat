@@ -21,13 +21,25 @@ async def login() -> None:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
 
+        # HH может долго грузиться и часто не доходит до networkidle из-за трекеров.
+        # Для интерактивного логина используем более мягкие ожидания и увеличенные таймауты.
+        page.set_default_navigation_timeout(120_000)
+
         print("\n" + "=" * 60)
         print("HH.ru Login")
         print("=" * 60)
 
         try:
             print("Opening HH.ru login page...")
-            await page.goto("https://hh.ru/login", wait_until="networkidle")
+            try:
+                await page.goto("https://hh.ru/login", wait_until="domcontentloaded", timeout=120_000)
+            except Exception as e:
+                # Не валим логин из-за таймаута навигации: браузер мог открыть страницу частично.
+                print(f"Warning: could not fully load login page: {e}")
+                try:
+                    await page.goto("https://hh.ru/login", wait_until="load", timeout=120_000)
+                except Exception as e2:
+                    print(f"Warning: second navigation attempt failed: {e2}")
             
             if not is_headless:
                 print("\n1. Log in to HH.ru in the opened browser window")

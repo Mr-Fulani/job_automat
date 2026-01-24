@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HH Automation — User {{ user.slug }}</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background: #0b1220; color: #e5e7eb; margin: 0; }
+      a { color: #93c5fd; text-decoration: none; }
+      .wrap { max-width: 980px; margin: 40px auto; padding: 0 16px; }
+      .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 18px; }
+      h1 { font-size: 18px; margin: 0 0 12px; }
+      h2 { font-size: 14px; margin: 18px 0 10px; color: #cbd5e1; }
+      label { display:block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1; }
+      input, textarea { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #334155; background: #0b1220; color: #e5e7eb; padding: 10px 12px; }
+      textarea { min-height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      button { border-radius: 10px; border: 1px solid #334155; background: #2563eb; color: #fff; padding: 10px 12px; cursor: pointer; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .err { margin-top: 12px; color: #fca5a5; font-size: 12px; }
+      .ok { margin-top: 12px; color: #86efac; font-size: 12px; }
+      code { background: #0b1220; padding: 2px 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div style="display:flex; justify-content: space-between; align-items: center;">
+          <h1>Пользователь: {{ user.slug }}</h1>
+          <a href="/ui/users">← назад</a>
+        </div>
+
+        <div style="font-size: 12px; color: #9ca3af;">
+          display_name: <b>{{ user.display_name }}</b> | session: <b>{{ 'yes' if session_exists else 'no' }}</b>
+        </div>
+
+        <h2>Загрузка HH-сессии</h2>
+        <form method="post" action="/ui/users/{{ user.slug }}/session" enctype="multipart/form-data">
+          <label for="session_file">hh_session.json</label>
+          <input id="session_file" name="session_file" type="file" accept="application/json" />
+          <div style="margin-top: 10px;">
+            <button type="submit">Upload</button>
+          </div>
+        </form>
+
+        <h2>Профиль (Raw JSON)</h2>
+        <form method="post" action="/ui/users/{{ user.slug }}/profile">
+          <label for="profile_json">profile_json</label>
+          <textarea id="profile_json" name="profile_json">{{ profile_json_text }}</textarea>
+          <div style="margin-top: 10px; display:flex; gap: 10px;">
+            <button type="submit">Сохранить</button>
+            <button type="submit" formaction="/ui/users/{{ user.slug }}/validate">Validate</button>
+          </div>
+        </form>
+
+        {% if error %}
+        <div class="err">{{ error }}</div>
+        {% endif %}
+        {% if message %}
+        <div class="ok">{{ message }}</div>
+        {% endif %}
+
+        <div style="margin-top: 14px; font-size: 12px; color: #9ca3af;">
+          Для API можно передавать заголовок <code>X-Admin-Token</code>. Для UI можно залогиниться на <code>/ui/login</code>.
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

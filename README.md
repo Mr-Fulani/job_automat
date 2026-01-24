@@ -334,6 +334,43 @@ chmod +x ./start-project.sh
 ./start-project.sh --success 10 --pause 3600 --query "Python разработчик" --pages 2 --max 50 --delay 3
 ```
 
+## Admin UI (профили пользователей)
+
+Для сервера предусмотрена простая админ-панель для управления пользователями и их профилями.
+
+### Настройка
+
+В `.env` нужно задать токен администратора:
+```bash
+ADMIN_TOKEN=your_secret_token
+```
+
+База данных профилей хранится в SQLite:
+`data/app.db`
+
+### Вход в UI
+
+Открой:
+- `/ui/login` — ввод токена (установит cookie `admin_token`)
+- `/ui/users` — список пользователей
+- `/ui/users/{slug}` — профиль пользователя + загрузка `hh_session.json`
+
+### API доступ (для скриптов)
+
+Для защищённых эндпоинтов (например `/api/users`) передавай заголовок:
+`X-Admin-Token: <ADMIN_TOKEN>`
+
+Пример:
+```bash
+curl -H "X-Admin-Token: $ADMIN_TOKEN" http://127.0.0.1:8000/api/users
+```
+
+### Сессия HH (на пользователя)
+
+У каждого пользователя своя сессия HH.
+Загруженный файл сессии сохраняется сюда:
+`data/users/<slug>/hh_session.json`
+
 ## API Endpoints
 
 ### GET /search

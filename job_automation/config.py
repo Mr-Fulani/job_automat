@@ -32,9 +32,20 @@ class Settings(BaseSettings):
     webuse_timeout: int = Field(default=90, alias="WEBUSE_TIMEOUT")
     webuse_max_steps: int = Field(default=15, alias="WEBUSE_MAX_STEPS")
 
+    # Admin UI
+    admin_token: str = Field(default="", alias="ADMIN_TOKEN")
+    app_db_path: Path = Field(default=Path("data/app.db"), alias="APP_DB_PATH")
+
+    # Per-user overrides (для multi-user запуска)
+    session_file_override: Path | None = Field(default=None, alias="SESSION_FILE")
+    candidate_profile_file: Path = Field(default=Path("data/candidate_profile.json"), alias="CANDIDATE_PROFILE_FILE")
+    processed_vacancies_file: Path = Field(default=Path("data/processed_vacancies.json"), alias="PROCESSED_VACANCIES_FILE")
+
     @property
     def session_file(self) -> Path:
         """Путь к сессии Playwright."""
+        if self.session_file_override is not None:
+            return self.session_file_override
         return self.n8n_files_dir / "hh_session.json"
 
     def ensure_dirs(self) -> None:

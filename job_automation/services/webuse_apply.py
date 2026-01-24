@@ -233,7 +233,7 @@ class WebUseApplyService(ApplyServiceInterface):
         экономя время и ресурсы.
         """
         self.processed_vacancies = {}
-        processed_file = Path("data/processed_vacancies.json")
+        processed_file = Path(self.settings.processed_vacancies_file)
 
         try:
             if processed_file.exists():
@@ -264,7 +264,7 @@ class WebUseApplyService(ApplyServiceInterface):
             FileNotFoundError: Если файл профиля не найден
             json.JSONDecodeError: Если файл содержит некорректный JSON
         """
-        profile_path = Path("data/candidate_profile.json")
+        profile_path = Path(self.settings.candidate_profile_file)
 
         if not profile_path.exists():
             raise FileNotFoundError("candidate_profile.json not found")
@@ -382,11 +382,7 @@ class WebUseApplyService(ApplyServiceInterface):
         if custom_message:
             cover_letter = custom_message
         else:
-            cover_letter = profile.cover_letter_template.format(
-                experience_years=profile.experience_years,
-                position=profile.position,
-                skills=", ".join(profile.skills)
-            )
+            cover_letter = self._format_answer_template(profile.cover_letter_template, profile)
         
         # Создание промпта для GPT-4o
         prompt = self._create_form_filling_prompt(profile, cover_letter)
@@ -1120,7 +1116,8 @@ class WebUseApplyService(ApplyServiceInterface):
 
         # Сохраняем в файл
         try:
-            processed_file = Path("data/processed_vacancies.json")
+            processed_file = Path(self.settings.processed_vacancies_file)
+            processed_file.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "vacancies": self.processed_vacancies,
                 "metadata": {

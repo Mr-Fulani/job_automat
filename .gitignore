@@ -32,6 +32,11 @@ Desktop.ini
 !data/candidate_profile.json
 !data/common_questions.json
 !job_automation/resources/common_questions.json
+!job_automation/templates/*.html
+!job_automation/templates/**/*.html
+
+data/app.db
+data/users/
 
 # Playwright screenshots / debug artifacts
 logs/
