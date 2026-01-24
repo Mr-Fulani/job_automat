@@ -20,6 +20,7 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
@@ -589,24 +590,51 @@ class WebUseApplyService(ApplyServiceInterface):
                 except Exception:
                     continue
 
+            # На части форм HH обязательность не выражена атрибутом required,
+            # но блок "Сопроводительное письмо" остаётся с кнопкой "Добавить".
+            # Если после попыток заполнения всё ещё видим "Добавить" в этом блоке — считаем, что письмо не добавлено.
+            try:
+                add_btn = page.locator('xpath=//*[normalize-space()="Сопроводительное письмо"]/following::*[(self::button or self::a or @role="button" or self::div or self::span) and normalize-space()="Добавить"][1]')
+                if await add_btn.count() > 0 and await add_btn.first.is_visible():
+                    self.logger.error("❌ Сопроводительное письмо не добавлено (кнопка 'Добавить' всё ещё видима)")
+                    try:
+                        await self._save_screenshot(page, "cover_letter_not_added")
+                    except Exception:
+                        pass
+                    return False
+            except Exception:
+                pass
+
         for i, input_element in enumerate(text_inputs):
             try:
                 placeholder = await input_element.get_attribute('placeholder') or ""
                 name = await input_element.get_attribute('name') or ""
+                data_qa = await input_element.get_attribute('data-qa') or ""
                 tag_name = await input_element.evaluate("el => el.tagName.toLowerCase()")
                 is_visible = await input_element.is_visible()
                 is_enabled = await input_element.is_enabled()
 
-                # Используем вопрос из массива по индексу
-                question_text = questions[i] if i < len(questions) else ""
+                # Определяем вопрос, связанный с конкретным полем
+                question_text = ""
+                try:
+                    question_text = await self._find_question_text(page, input_element)
+                except Exception:
+                    question_text = ""
 
-                self.logger.info(f"Поле {i+1}: tag={tag_name}, name='{name}', placeholder='{placeholder}', question='{question_text[:100] if question_text else 'N/A'}', visible={is_visible}, enabled={is_enabled}")
+                self.logger.info(f"Поле {i+1}: tag={tag_name}, name='{name}', data-qa='{data_qa}', placeholder='{placeholder}', question='{question_text[:100] if question_text else 'N/A'}', visible={is_visible}, enabled={is_enabled}")
 
                 if not is_visible or not is_enabled:
                     continue
 
                 # Если это поле сопроводительного, но мы его уже заполнили прицельно выше — пропускаем
-                if cover_letter_filled and tag_name == "textarea" and placeholder == "Сопроводительное письмо":
+                is_cover_letter_field = (
+                    ('letter' in (name or '').lower()) or
+                    ('cover' in (name or '').lower()) or
+                    ('letter' in (data_qa or '').lower()) or
+                    ('сопровод' in (placeholder or '').lower()) or
+                    ('сопровод' in (question_text or '').lower())
+                )
+                if cover_letter_filled and is_cover_letter_field:
                     continue
 
                 value = ""
@@ -616,7 +644,7 @@ class WebUseApplyService(ApplyServiceInterface):
                     value = profile.phone
                 elif 'город' in placeholder.lower() or 'city' in name.lower():
                     value = profile.city
-                elif 'сопроводительное' in placeholder.lower() or 'cover' in name.lower() or 'letter' in name.lower():
+                elif is_cover_letter_field:
                     value = cover_letter
                     cover_letter_filled = True
                     self.logger.info(f"Найдено поле сопроводительного письма: '{placeholder or name}'")
@@ -664,6 +692,7 @@ class WebUseApplyService(ApplyServiceInterface):
         submit_selectors = [
             'button[data-qa="vacancy-response-submit-popup"]',
             'button:has-text("Откликнуться")',
+            'button:has-text("Откликнуться без текста")',
             'button:has-text("Отправить")',
             'button[type="submit"]'
         ]
@@ -671,32 +700,51 @@ class WebUseApplyService(ApplyServiceInterface):
         self.logger.info("Поиск кнопки отправки формы...")
         for selector in submit_selectors:
             try:
-                button = await page.wait_for_selector(selector, timeout=3000)
-                if button and await button.is_visible():
-                    self.logger.info(f"Найдена и нажимается кнопка отправки: {selector}")
-                    await button.click()
-                    await page.wait_for_timeout(2500)
-
-                    if await self._is_application_success(page):
-                        self.logger.info("✅ Подтверждение отклика найдено")
-                        return True
-
-                    errors = await self._get_validation_errors(page)
-                    if errors:
-                        self.logger.error(f"❌ Ошибки валидации после отправки: {errors[:3]}")
+                loc = page.locator(selector)
+                cnt = await loc.count()
+                if cnt == 0:
+                    continue
+                for i in range(cnt):
+                    try:
+                        button = loc.nth(i)
+                        if not await button.is_visible():
+                            continue
                         try:
-                            await self._save_screenshot(page, "validation_errors")
+                            if not await button.is_enabled():
+                                continue
+                        except Exception:
+                            pass
+                        try:
+                            await button.scroll_into_view_if_needed()
+                        except Exception:
+                            pass
+
+                        self.logger.info(f"Найдена и нажимается кнопка отправки: {selector}")
+                        await button.click()
+                        await page.wait_for_timeout(2500)
+
+                        if await self._is_application_success(page):
+                            self.logger.info("✅ Подтверждение отклика найдено")
+                            return True
+
+                        errors = await self._get_validation_errors(page)
+                        if errors:
+                            self.logger.error(f"❌ Ошибки валидации после отправки: {errors[:3]}")
+                            try:
+                                await self._save_screenshot(page, "validation_errors")
+                            except Exception:
+                                pass
+                            return False
+
+                        # Если нет подтверждения и нет ошибок — считаем неуспехом
+                        self.logger.error("❌ Нет подтверждения отправки отклика")
+                        try:
+                            await self._save_screenshot(page, "no_success_confirmation")
                         except Exception:
                             pass
                         return False
-
-                    # Если нет подтверждения и нет ошибок — считаем неуспехом
-                    self.logger.error("❌ Нет подтверждения отправки отклика")
-                    try:
-                        await self._save_screenshot(page, "no_success_confirmation")
                     except Exception:
-                        pass
-                    return False
+                        continue
             except Exception as e:
                 self.logger.warning(f"Не удалось найти кнопку {selector}: {str(e)}")
                 continue
@@ -708,6 +756,11 @@ class WebUseApplyService(ApplyServiceInterface):
     async def _try_open_cover_letter_block(self, page: Page) -> bool:
         """Пытается раскрыть блок/поле сопроводительного письма (если оно скрыто за кнопкой/ссылкой)."""
         toggle_selectors = [
+            # Приоритет: ссылка/кнопка "Добавить" рядом с заголовком "Сопроводительное письмо"
+            'xpath=//*[normalize-space()="Сопроводительное письмо"]/following-sibling::*[normalize-space()="Добавить"][1]',
+            'xpath=//*[contains(normalize-space(), "Сопроводительное письмо")]/following-sibling::*[normalize-space()="Добавить"][1]',
+            'xpath=//*[normalize-space()="Сопроводительное письмо"]/ancestor::*[self::div or self::section or self::fieldset][1]//*[normalize-space()="Добавить" and (self::button or self::a or @role="button")][1]',
+            'xpath=//*[contains(normalize-space(), "Сопроводительное письмо")]/ancestor::*[self::div or self::section or self::fieldset][1]//*[normalize-space()="Добавить" and (self::button or self::a or @role="button")][1]',
             'button[data-qa="vacancy-response-letter-toggle"]',
             'button:has-text("Сопроводительное письмо")',
             'a:has-text("Сопроводительное письмо")',
@@ -722,8 +775,6 @@ class WebUseApplyService(ApplyServiceInterface):
             'a:has-text("Добавить сопроводительное")',
             'div[role="button"]:has-text("Добавить")',
             'span[role="button"]:has-text("Добавить")',
-            'div:has-text("Добавить")',
-            'span:has-text("Добавить")',
         ]
 
         for sel in toggle_selectors:
@@ -741,6 +792,10 @@ class WebUseApplyService(ApplyServiceInterface):
                 try:
                     await el.click()
                     await page.wait_for_timeout(400)
+                    try:
+                        self.logger.info(f"✅ Раскрыт блок сопроводительного письма: {sel}")
+                    except Exception:
+                        pass
                     return True
                 except Exception:
                     continue
@@ -912,26 +967,6 @@ class WebUseApplyService(ApplyServiceInterface):
 
         question_text_lower = question_text.lower()
 
-        # Явные правила для типовых вопросов с вариантами Да/Нет (radio)
-        # (нужно возвращать текст, который максимально совпадает с label опции)
-        if 'трудоустройств' in question_text_lower and ('тк' in question_text_lower or 'рф' in question_text_lower):
-            return "Да"
-
-        if ('fastapi' in question_text_lower or 'starlette' in question_text_lower or 'aiohttp' in question_text_lower) and 'опыт' in question_text_lower:
-            return "Да, FastAPI или Starlette или aiohttp"
-
-        if 'websocket' in question_text_lower and 'опыт' in question_text_lower:
-            return "Да"
-
-        if 'asyncio' in question_text_lower and 'опыт' in question_text_lower:
-            return "Да"
-
-        if 'rust' in question_text_lower and ('инструмент' in question_text_lower or 'библиотек' in question_text_lower or 'crate' in question_text_lower):
-            return "Использовал Cargo и crates.io; для async — tokio, для HTTP — reqwest, для сериализации — serde, для логирования — tracing/log, для тестов — встроенный test/criterion, для CLI — clap. Есть опыт настройки clippy/rustfmt и CI."
-
-        if ('разниц' in question_text_lower and 'экземпляр' in question_text_lower and 'класс' in question_text_lower and 'статическ' in question_text_lower and 'python' in question_text_lower):
-            return "Метод экземпляра (self) работает с данными объекта. Метод класса (@classmethod, cls) работает с классом и часто используется для альтернативных конструкторов/фабрик. Статический метод (@staticmethod) не получает ни self, ни cls и является логически связанной с классом функцией-утилитой."
-
         # Сначала проверяем готовые ответы из файла
         best_match = self._find_best_question_match(question_text_lower)
         if best_match:
@@ -1001,12 +1036,30 @@ class WebUseApplyService(ApplyServiceInterface):
             priority = question_data.get('priority', 5)
 
             for pattern in patterns:
-                # Простой поиск подстроки с учетом приоритета
-                if pattern.lower() in question_text:
-                    score = len(pattern) * priority  # Чем длиннее паттерн и выше приоритет, тем лучше
-                    if score > best_score:
-                        best_score = score
-                        best_match = key
+                try:
+                    p = (pattern or "").strip()
+                    if not p:
+                        continue
+
+                    matched = False
+                    # Если похоже на regex (используются метасимволы), пробуем re.search
+                    if any(ch in p for ch in (".*", "^", "$", "[", "]", "(", ")", "\\")):
+                        try:
+                            if re.search(p, question_text, flags=re.IGNORECASE):
+                                matched = True
+                        except re.error:
+                            matched = False
+                    else:
+                        if p.lower() in question_text:
+                            matched = True
+
+                    if matched:
+                        score = len(p) * priority  # Чем длиннее паттерн и выше приоритет, тем лучше
+                        if score > best_score:
+                            best_score = score
+                            best_match = key
+                except Exception:
+                    continue
 
         return best_match
 
@@ -1238,6 +1291,19 @@ class WebUseApplyService(ApplyServiceInterface):
                                 except Exception:
                                     continue
 
+                            # Частый кейс: желаемое "готов", а варианты "готов"/"не хотелось бы"
+                            if not picked and 'готов' in desired_lower:
+                                for r in group:
+                                    try:
+                                        label_text = (await self._get_radio_label_text(page, r) or "").strip().lower()
+                                        if label_text and 'готов' in label_text:
+                                            await r.check()
+                                            self.logger.info(f"✅ Выбран radio-ответ (fallback готов): вопрос='{question_text[:60]}...', вариант='{label_text[:60]}...'")
+                                            picked = True
+                                            break
+                                    except Exception:
+                                        continue
+
                         # 2) фолбэк: выбираем первый вариант, содержащий "да"
                         if not picked:
                             # Если уже выбран "да" — не трогаем
@@ -1255,6 +1321,20 @@ class WebUseApplyService(ApplyServiceInterface):
                                         break
                                 except Exception:
                                     continue
+
+                        # 3) доп. фолбэк: выбираем вариант "готов" если он есть среди вариантов
+                        if not picked:
+                            for r in group:
+                                try:
+                                    label_text = (await self._get_radio_label_text(page, r) or "").strip().lower()
+                                    if 'готов' in label_text:
+                                        await r.check()
+                                        self.logger.info(f"✅ Выбран radio-ответ (fallback готов): вопрос='{question_text[:60]}...'")
+                                        picked = True
+                                        break
+                                except Exception:
+                                    continue
+
                     except Exception:
                         continue
 

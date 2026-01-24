@@ -1,0 +1,191 @@
+{
+  "questions": {
+    "python_experience": {
+      "patterns": [
+        "опыт.*python",
+        "python.*опыт",
+        "разработка.*python",
+        "python.*разработка",
+        "коммерческий.*python"
+      ],
+      "answer": "{experience_years} лет коммерческого опыта в разработке на Python",
+      "priority": 10
+    },
+    "java_experience": {
+      "patterns": [
+        "опыт.*java",
+        "java.*опыт",
+        "разработка.*java",
+        "знания.*java"
+      ],
+      "answer": "Нет опыта разработки на Java",
+      "priority": 9
+    },
+    "salary_expectations": {
+      "patterns": [
+        "зарплат.*ожидания",
+        "сумм.*рассматриваете",
+        "уровень.*зп",
+        "зарплатн.*ожидания",
+        "размер.*зп"
+      ],
+      "answer": "{salary_expectations}",
+      "priority": 10
+    },
+    "relocation": {
+      "patterns": [
+        "переезд",
+        "релокация",
+        "переех",
+        "готов.*переехать",
+        "переезд.*город"
+      ],
+      "answer": "Готов рассмотреть вариант с релокацией",
+      "priority": 7
+    },
+    "remote_work": {
+      "patterns": [
+        "удален.*работа",
+        "удаленка",
+        "дистанцион",
+        "remote.*work"
+      ],
+      "answer": "Предпочитаю удаленную работу, но готов рассмотреть гибридный формат",
+      "priority": 6
+    },
+    "english_level": {
+      "patterns": [
+        "английск",
+        "english.*level",
+        "уровень.*английск",
+        "язык.*английск"
+      ],
+      "answer": "{english_level}",
+      "priority": 8
+    },
+    "citizenship": {
+      "patterns": [
+        "гражданств",
+        "паспорт",
+        "регистрация",
+        "прописка"
+      ],
+      "answer": "{citizenship}",
+      "priority": 8
+    },
+    "education": {
+      "patterns": [
+        "образован",
+        "диплом",
+        "вуз",
+        "университет"
+      ],
+      "answer": "{education}",
+      "priority": 7
+    },
+    "age": {
+      "patterns": [
+        "возраст",
+        "лет",
+        "года"
+      ],
+      "answer": "{age}",
+      "priority": 6
+    },
+    "business_trips": {
+      "patterns": [
+        "командировк",
+        "бизнес.*поездк",
+        "готов.*командировк"
+      ],
+      "answer": "{business_trips}",
+      "priority": 7
+    },
+    "work_schedule": {
+      "patterns": [
+        "график.*работ",
+        "режим.*работ",
+        "полная.*занятость",
+        "частичн.*занятость"
+      ],
+      "answer": "Предпочитаю полную занятость, гибкий график",
+      "priority": 5
+    },
+    "experience_years": {
+      "patterns": [
+        "стаж.*работ",
+        "опыт.*работ",
+        "лет.*работ"
+      ],
+      "answer": "{experience_years} лет опыта работы в IT",
+      "priority": 9
+    },
+    "frameworks": {
+      "patterns": [
+        "фреймворк",
+        "django",
+        "fastapi",
+        "flask",
+        "web.*framework"
+      ],
+      "answer": "Опыт работы с Django, FastAPI, Flask",
+      "priority": 8
+    },
+    "databases": {
+      "patterns": [
+        "баз.*данных",
+        "postgresql",
+        "mysql",
+        "sqlite",
+        "database"
+      ],
+      "answer": "Опыт работы с PostgreSQL, MySQL, SQLite",
+      "priority": 7
+    },
+    "rust_tools": {
+      "patterns": [
+        "rust.*инструмент",
+        "инструмент.*rust",
+        "rust.*библиотек",
+        "библиотек.*rust",
+        "rust.*crate",
+        "crate.*rust"
+      ],
+      "answer": "Использовал Cargo и crates.io; для async — tokio, для HTTP — reqwest, для сериализации — serde, для логирования — tracing/log, для тестов — встроенный test/criterion, для CLI — clap. Есть опыт настройки clippy/rustfmt и CI.",
+      "priority": 9
+    },
+    "python_method_types": {
+      "patterns": [
+        "разниц.*метод.*экземпляр.*класс.*стат",
+        "метод.*экземпляра.*класса.*статичес",
+        "instance.*class.*static.*method"
+      ],
+      "answer": "Метод экземпляра (self) работает с данными объекта. Метод класса (@classmethod, cls) работает с классом и часто используется для альтернативных конструкторов/фабрик. Статический метод (@staticmethod) не получает ни self, ни cls и является логически связанной с классом функцией-утилитой.",
+      "priority": 9
+    },
+    "cpp_reading": {
+      "patterns": [
+        "знан.*c\\+\\+",
+        "c\\+\\+.*достаточн",
+        "c\\+\\+.*чтен"
+      ],
+      "answer": "Да",
+      "priority": 10
+    },
+    "python38_support": {
+      "patterns": [
+        "python 3\\.8",
+        "поддерж.*python 3\\.8",
+        "готов.*поддерж.*python 3\\.8"
+      ],
+      "answer": "готов",
+      "priority": 10
+    }
+  },
+  "metadata": {
+    "version": "1.0",
+    "description": "Часто задаваемые вопросы работодателями и готовые ответы для экономии токенов AI",
+    "last_updated": "2026-01-24",
+    "total_questions": 18
+  }
+}

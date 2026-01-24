@@ -30,3 +30,5 @@ Desktop.ini
 !HH.ru Flow (With AI and Pagination).json
 !package.json
 !data/candidate_profile.json
+!data/common_questions.json
+!job_automation/resources/common_questions.json
