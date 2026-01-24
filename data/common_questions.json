@@ -29,7 +29,7 @@
         "starlette",
         "aiohttp"
       ],
-      "answer": "{fastapi_years} года опыта с FastAPI (а также Starlette/aiohttp по необходимости)",
+      "answer": "{fastapi_years} года опыта с FastAPI (при необходимости работал также со Starlette/aiohttp)",
       "priority": 10
     },
     "java_experience": {
