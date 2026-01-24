@@ -1,20 +1,22 @@
 {
-  "full_name": "Mr. Fulani",
+  "full_name": "Mr Fulani",
   "email": "fulani.dev@gmail.com",
   "phone": "+90 552 528 14 97",
   "city": "Стамбул",
   "birth_date": "1990-01-01",
-  "experience_years": 5,
+  "experience_years": 4,
   "position": "Python разработчик",
-  "skills": ["Django", "FastAPI", "PostgreSQL", "Docker", "Docker-Compose", "asyncio", "Redis", "Git", "GitHub", "GitLab", "asyncio"],
+  "skills": ["Python", "Django", "Django REST Framework", "FastAPI", "Flask", "PostgreSQL", "SQLAlchemy", "Docker", "Git", "Linux"],
   "work_format": ["удалёнка", "гибрид"],
   "salary_expectations": "200 000 – 300 000 ₽",
-  "cover_letter_template": "Привет! У меня {experience_years} лет опыта в {position}. Стек: {skills}. Готов выйти на проект.",
+  "cover_letter_template": "Здравствуйте! Меня зовут {full_name}. У меня {experience_years} года коммерческого опыта в backend-разработке на Python. 3+ года работаю с Django/DRF и FastAPI: проектирование REST API, интеграции, оптимизация и поддержка. Стек: {skills}. Буду рад обсудить задачи и формат сотрудничества.",
   "answers": {
-    "готов к командировкам": "Да",
-    "возраст": "33",
-    "гражданство рф": "Да",
-    "уровень английского": "A2",
-    "образование": "Высшее техническое"
+    "business_trips": "Да",
+    "age": "34",
+    "citizenship": "Не РФ",
+    "english_level": "B1",
+    "education": "Магистр: Информационные системы и технологии",
+    "django_years": "3+",
+    "fastapi_years": "3+"
   }
 }

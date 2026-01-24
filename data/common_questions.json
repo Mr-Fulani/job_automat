@@ -8,7 +8,28 @@
         "python.*разработка",
         "коммерческий.*python"
       ],
-      "answer": "{experience_years} лет коммерческого опыта в разработке на Python",
+      "answer": "{experience_years} года коммерческого опыта в разработке на Python",
+      "priority": 10
+    },
+    "django_experience": {
+      "patterns": [
+        "опыт.*django",
+        "django.*опыт",
+        "django.*drf",
+        "drf",
+        "django rest framework"
+      ],
+      "answer": "{django_years} года опыта с Django и Django REST Framework",
+      "priority": 10
+    },
+    "fastapi_experience": {
+      "patterns": [
+        "опыт.*fastapi",
+        "fastapi.*опыт",
+        "starlette",
+        "aiohttp"
+      ],
+      "answer": "{fastapi_years} года опыта с FastAPI (а также Starlette/aiohttp по необходимости)",
       "priority": 10
     },
     "java_experience": {
@@ -128,7 +149,7 @@
         "flask",
         "web.*framework"
       ],
-      "answer": "Опыт работы с Django, FastAPI, Flask",
+      "answer": "Python backend: Django/DRF ({django_years} года), FastAPI ({fastapi_years} года), Flask",
       "priority": 8
     },
     "databases": {
@@ -139,7 +160,7 @@
         "sqlite",
         "database"
       ],
-      "answer": "Опыт работы с PostgreSQL, MySQL, SQLite",
+      "answer": "Основной опыт: PostgreSQL + SQLAlchemy (проектирование схем, индексы, оптимизация запросов)",
       "priority": 7
     },
     "rust_tools": {
@@ -186,6 +207,6 @@
     "version": "1.0",
     "description": "Часто задаваемые вопросы работодателями и готовые ответы для экономии токенов AI",
     "last_updated": "2026-01-24",
-    "total_questions": 18
+    "total_questions": 20
   }
 }
