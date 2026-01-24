@@ -309,7 +309,16 @@ async def ui_user_upload_session(request: Request, slug: str, session_file: Uplo
     try:
         content = await session_file.read()
         _users_dir(slug).mkdir(parents=True, exist_ok=True)
-        _session_path(slug).write_bytes(content)
+        current_path = _session_path(slug)
+        if current_path.exists():
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = _users_dir(slug) / f"hh_session_{ts}.json"
+            try:
+                current_path.rename(backup_path)
+            except Exception:
+                # если rename не вышел (например, другая ФС) — пробуем копию
+                backup_path.write_bytes(current_path.read_bytes())
+        current_path.write_bytes(content)
         return await ui_user_edit(request, slug, message="session uploaded")
     except Exception as e:
         return await ui_user_edit(request, slug, error=str(e))

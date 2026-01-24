@@ -1,4 +1,5 @@
 import asyncio
+import argparse
 import json
 import sys
 import os
@@ -7,7 +8,21 @@ from typing import Optional
 from ..config import get_settings
 from ..services.browser import BrowserManager
 
-async def login() -> None:
+def _apply_user_session_override(user_id: str) -> None:
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return
+    os.environ["SESSION_FILE"] = str(
+        os.path.join("data", "users", user_id, "hh_session.json")
+    )
+    try:
+        get_settings.cache_clear()
+    except Exception:
+        pass
+
+
+async def login(user_id: str = "") -> None:
+    _apply_user_session_override(user_id)
     settings = get_settings()
     settings.ensure_dirs()
     manager = BrowserManager()
@@ -230,7 +245,11 @@ async def login() -> None:
         print(f"\n✓ Session saved to: {settings.session_file}")
 
 def main() -> None:
-    asyncio.run(login())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--user-id", dest="user_id", default="")
+    args = parser.parse_args()
+
+    asyncio.run(login(user_id=str(args.user_id or "")))
 
 if __name__ == "__main__":
     main()

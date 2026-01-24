@@ -19,6 +19,7 @@ async def _cycle_loop(
     message: str,
     force: bool,
     cycles: int,
+    dry_run: bool,
 ) -> None:
     await browser_manager.start()
     try:
@@ -39,6 +40,7 @@ async def _cycle_loop(
                 keep_open_seconds=0.0,
                 url="",
                 force=force,
+                dry_run=dry_run,
                 manage_browser=False,
             )
 
@@ -66,6 +68,7 @@ def main() -> None:
     parser.add_argument("--message", type=str, default="")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--cycles", type=int, default=0)
+    parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args()
 
@@ -81,6 +84,7 @@ def main() -> None:
             message=str(args.message or ""),
             force=bool(args.force),
             cycles=int(args.cycles),
+            dry_run=bool(args.dry_run),
         )
     )
 

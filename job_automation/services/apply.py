@@ -18,6 +18,7 @@ class ApplyStatus(str, Enum):
     SUCCESS = "success"
     SKIPPED = "skipped"
     ERROR = "error"
+    DRY_RUN = "dry_run"
 
 
 @dataclass
@@ -47,7 +48,8 @@ class VacancyApplyService(ApplyServiceInterface):
     async def _fill_cover_letter_modal(
         self,
         page: Page,
-        message: str
+        message: str,
+        dry_run: bool,
     ) -> Optional[ApplyResult]:
         """
         Заполнение сопроводительного письма в модальном окне и отправка.
@@ -68,6 +70,9 @@ class VacancyApplyService(ApplyServiceInterface):
                 await letter_area.fill(message)
             else:
                 logger.warning("Cover letter field not found in modal")
+
+            if dry_run:
+                return ApplyResult(ApplyStatus.DRY_RUN, "Dry-run: cover letter filled (not submitted)")
             
             submit_btn = page.locator("button[data-qa='vacancy-response-submit-popup']")
             if await submit_btn.count() > 0:
@@ -84,7 +89,8 @@ class VacancyApplyService(ApplyServiceInterface):
     async def _try_cover_letter_link(
         self,
         page: Page,
-        message: str
+        message: str,
+        dry_run: bool,
     ) -> Optional[ApplyResult]:
         """Попытка отклика через ссылку 'Написать сопроводительное'."""
         cover_letter_link = page.locator("a:has-text('Написать сопроводительное')")
@@ -92,7 +98,7 @@ class VacancyApplyService(ApplyServiceInterface):
         if await cover_letter_link.count() > 0 and message:
             logger.debug("Found 'Write cover letter' link, clicking...")
             await cover_letter_link.first.click()
-            result = await self._fill_cover_letter_modal(page, message)
+            result = await self._fill_cover_letter_modal(page, message, dry_run=dry_run)
             if result:
                 return result
         
@@ -101,7 +107,8 @@ class VacancyApplyService(ApplyServiceInterface):
     async def _try_dropdown_apply(
         self,
         page: Page,
-        message: str
+        message: str,
+        dry_run: bool,
     ) -> Optional[ApplyResult]:
         """Попытка отклика через выпадающее меню с опцией сопроводительного письма."""
         dropdown_arrow = page.locator(
@@ -117,7 +124,7 @@ class VacancyApplyService(ApplyServiceInterface):
             with_letter_option = page.locator("text=С сопроводительным письмом")
             if await with_letter_option.count() > 0:
                 await with_letter_option.first.click()
-                result = await self._fill_cover_letter_modal(page, message)
+                result = await self._fill_cover_letter_modal(page, message, dry_run=dry_run)
                 if result:
                     return result
         
@@ -126,7 +133,8 @@ class VacancyApplyService(ApplyServiceInterface):
     async def _try_post_apply_letter(
         self,
         page: Page,
-        message: str
+        message: str,
+        dry_run: bool,
     ) -> Optional[ApplyResult]:
         """Попытка заполнения сопроводительного письма на экране после отклика."""
         resume_delivered = page.locator("text=Резюме доставлено")
@@ -140,6 +148,8 @@ class VacancyApplyService(ApplyServiceInterface):
                 
                 submit_btn = page.locator("button:has-text('Отправить')")
                 if await submit_btn.count() > 0:
+                    if dry_run:
+                        return ApplyResult(ApplyStatus.DRY_RUN, "Dry-run: post-apply letter filled (not submitted)")
                     await submit_btn.first.click()
                     await page.wait_for_timeout(2000)
                     return ApplyResult(ApplyStatus.SUCCESS, "Applied with post-apply cover letter")
@@ -158,7 +168,7 @@ class VacancyApplyService(ApplyServiceInterface):
                 return True
         return False
 
-    async def apply(self, url: str, message: str = "") -> dict:
+    async def apply(self, url: str, message: str = "", dry_run: bool = False) -> dict:
         """
         Отклик на вакансию с опциональным сопроводительным письмом.
         
@@ -193,8 +203,14 @@ class VacancyApplyService(ApplyServiceInterface):
                 if await self._check_already_applied(page):
                     return ApplyResult(ApplyStatus.SKIPPED, "Already applied").to_dict()
 
+                if dry_run:
+                    return ApplyResult(
+                        ApplyStatus.DRY_RUN,
+                        "Dry-run: vacancy opened (not submitted)",
+                    ).to_dict()
+
                 # Стратегия 1: Попытка через ссылку сопроводительного письма
-                result = await self._try_cover_letter_link(page, message)
+                result = await self._try_cover_letter_link(page, message, dry_run=dry_run)
                 if result:
                     return result.to_dict()
 
@@ -210,7 +226,7 @@ class VacancyApplyService(ApplyServiceInterface):
                     ).to_dict()
 
                 # Стратегия 2: Попытка через выпадающий список с сопроводительным
-                result = await self._try_dropdown_apply(page, message)
+                result = await self._try_dropdown_apply(page, message, dry_run=dry_run)
                 if result:
                     return result.to_dict()
 
@@ -220,7 +236,7 @@ class VacancyApplyService(ApplyServiceInterface):
                 await page.wait_for_timeout(2000)
 
                 # Стратегия 4: Сопроводительное письмо после отклика
-                result = await self._try_post_apply_letter(page, message)
+                result = await self._try_post_apply_letter(page, message, dry_run=dry_run)
                 if result:
                     return result.to_dict()
 

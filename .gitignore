@@ -38,6 +38,9 @@ Desktop.ini
 data/app.db
 data/users/
 
+# Local debug artifacts
+data/debug/
+
 # Playwright screenshots / debug artifacts
 logs/
 !logs/.gitkeep

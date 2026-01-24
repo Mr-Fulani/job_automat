@@ -13,6 +13,7 @@ FORCE=""
 VISIBLE=0
 SERVER=0
 USER_ID=""
+DRY_RUN=""
 
 usage() {
   cat <<EOF
@@ -31,6 +32,7 @@ Options:
   --visible          Включить видимый браузер (BROWSER_HEADLESS=false)
   --server           Запустить API сервер + Admin UI (вместо цикла откликов)
   --user-id SLUG     Запуск откликов от имени пользователя (использует data/users/<slug>/...)
+  --dry-run          Не отправлять отклик: только открыть/заполнить форму (для теста)
   -h, --help         Показать помощь
 
 Examples:
@@ -67,6 +69,8 @@ while [[ $# -gt 0 ]]; do
       SERVER=1; shift 1;;
     --user-id)
       USER_ID="$2"; shift 2;;
+    --dry-run)
+      DRY_RUN="--dry-run"; shift 1;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -116,6 +120,7 @@ exec "${PYTHON_BIN}" run_cycle_automation.py \
   --pause "${PAUSE}" \
   --delay "${DELAY}" \
   ${FORCE} \
+  ${DRY_RUN} \
   --cycles "${CYCLES}" \
   ${MSG_ARGS[@]+"${MSG_ARGS[@]}"} \
   2>&1 | tee -a "${RUN_LOG}"

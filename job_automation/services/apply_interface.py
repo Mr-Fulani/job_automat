@@ -9,13 +9,14 @@ class ApplyServiceInterface(ABC):
     """Абстрактный интерфейс для сервисов отклика."""
     
     @abstractmethod
-    async def apply(self, url: str, message: str = "") -> Dict:
+    async def apply(self, url: str, message: str = "", dry_run: bool = False) -> Dict:
         """
         Отклик на вакансию.
         
         Args:
             url: URL вакансии
             message: Сопроводительное письмо
+            dry_run: Если True — не отправлять отклик, только пройти шаги/заполнить форму.
             
         Returns:
             Dict с полями status и message

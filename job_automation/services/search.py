@@ -1,7 +1,9 @@
 """Асинхронный сервис поиска вакансий."""
 
 import logging
+from datetime import datetime
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from playwright.async_api import Page
@@ -61,9 +63,56 @@ class VacancySearchService:
 
     async def _check_bot_protection(self, page: Page) -> bool:
         """Проверка, сработала ли защита от ботов (капча)."""
-        title = await page.title()
-        content = await page.content()
-        return "captcha" in title.lower() or "robot" in content.lower()
+        try:
+            url = page.url.lower()
+            title = (await page.title()).lower()
+
+            if "captcha" in url or "captcha" in title:
+                return True
+
+            captcha_selectors = [
+                'iframe[src*="captcha"]',
+                'form[action*="captcha"]',
+                '[class*="captcha"]',
+                '[id*="captcha"]',
+                'img[src*="captcha"]',
+            ]
+            for selector in captcha_selectors:
+                el = await page.query_selector(selector)
+                if el and await el.is_visible():
+                    return True
+
+            content = (await page.content()).lower()
+            captcha_phrases = [
+                "подтвердите, что вы не робот",
+                "я не робот",
+                "введите символы",
+                "anti-bot",
+                "antibot",
+            ]
+            return any(p in content for p in captcha_phrases)
+        except Exception:
+            return False
+
+    async def _save_bot_protection_artifacts(self, page: Page, prefix: str) -> tuple[Path, Path]:
+        debug_dir = Path("data") / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        screenshot_path = debug_dir / f"{prefix}_{ts}.png"
+        html_path = debug_dir / f"{prefix}_{ts}.html"
+
+        try:
+            await page.screenshot(path=str(screenshot_path), full_page=True)
+        except Exception as e:
+            logger.warning(f"Failed to save screenshot for bot protection page: {e}")
+
+        try:
+            html_path.write_text(await page.content(), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to save HTML for bot protection page: {e}")
+
+        return screenshot_path, html_path
 
     async def search(
         self,
@@ -100,7 +149,10 @@ class VacancySearchService:
             await page.goto(url, wait_until="domcontentloaded")
             
             if await self._check_bot_protection(page):
-                raise RuntimeError("Bot protection triggered (captcha detected)")
+                screenshot_path, html_path = await self._save_bot_protection_artifacts(page, "bot_protection_search")
+                raise RuntimeError(
+                    f"Bot protection triggered (captcha detected). Saved: {screenshot_path} and {html_path}"
+                )
 
             # Ожидание результатов
             await page.wait_for_selector("[data-qa='vacancy-serp__vacancy']", timeout=10000)

@@ -162,6 +162,7 @@ async def run(
     keep_open_seconds: float,
     url: str,
     force: bool,
+    dry_run: bool,
     manage_browser: bool = True,
 ) -> None:
     user_id = str(user_id or "").strip()
@@ -225,17 +226,17 @@ async def run(
                         try:
                             if webuse_service is not None:
                                 if page is not None:
-                                    result = await webuse_service.apply_with_page(page, url, message)
+                                    result = await webuse_service.apply_with_page(page, url, message, dry_run=dry_run)
                                 else:
-                                    result = await webuse_service.apply(url, message)
+                                    result = await webuse_service.apply(url, message, dry_run=dry_run)
                             else:
-                                result = await standard_service.apply(url, message)  # type: ignore[union-attr]
+                                result = await standard_service.apply(url, message, dry_run=dry_run)  # type: ignore[union-attr]
 
                             status = str((result or {}).get("status", "unknown"))
                             msg = str((result or {}).get("message", ""))
                             print(f"[result] {status} - {msg}")
                             _safe_save_processed(processed_store, url, status=status, message=msg)
-                            if status == "success":
+                            if status == "success" or (dry_run and status == "dry_run"):
                                 applied_count += 1
                         except Exception as e:
                             _safe_save_processed(processed_store, url, status="error", message=_exc_message(e))
@@ -245,17 +246,17 @@ async def run(
                 try:
                     if webuse_service is not None:
                         if page is not None:
-                            result = await webuse_service.apply_with_page(page, url, message)
+                            result = await webuse_service.apply_with_page(page, url, message, dry_run=dry_run)
                         else:
-                            result = await webuse_service.apply(url, message)
+                            result = await webuse_service.apply(url, message, dry_run=dry_run)
                     else:
-                        result = await standard_service.apply(url, message)  # type: ignore[union-attr]
+                        result = await standard_service.apply(url, message, dry_run=dry_run)  # type: ignore[union-attr]
 
                     status = str((result or {}).get("status", "unknown"))
                     msg = str((result or {}).get("message", ""))
                     print(f"[result] {status} - {msg}")
                     _safe_save_processed(processed_store, url, status=status, message=msg)
-                    if status == "success":
+                    if status == "success" or (dry_run and status == "dry_run"):
                         applied_count += 1
                 except Exception as e:
                     _safe_save_processed(processed_store, url, status="error", message=_exc_message(e))
@@ -306,12 +307,12 @@ async def run(
                     if webuse_service is not None:
                         print(f"[apply] {url}")
                         if page is not None:
-                            result = await webuse_service.apply_with_page(page, url, message)
+                            result = await webuse_service.apply_with_page(page, url, message, dry_run=dry_run)
                         else:
-                            result = await webuse_service.apply(url, message)
+                            result = await webuse_service.apply(url, message, dry_run=dry_run)
                     else:
                         print(f"[apply] {url}")
-                        result = await standard_service.apply(url, message)  # type: ignore[union-attr]
+                        result = await standard_service.apply(url, message, dry_run=dry_run)  # type: ignore[union-attr]
 
                     status = str((result or {}).get("status", "unknown"))
                     msg = str((result or {}).get("message", ""))
@@ -320,7 +321,7 @@ async def run(
 
                     _safe_save_processed(processed_store, url, status=status, message=msg)
 
-                    if status == "success":
+                    if status == "success" or (dry_run and status == "dry_run"):
                         applied_count += 1
 
                 except Exception as e:
@@ -358,6 +359,7 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=3.0)
     parser.add_argument("--message", type=str, default="")
     parser.add_argument("--keep-open", dest="keep_open_seconds", type=float, default=0.0)
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--cleanup-logs", action="store_true")
     parser.add_argument("--logs-keep-days", type=int, default=7)
     parser.add_argument("--logs-keep-files", type=int, default=200)
@@ -384,6 +386,7 @@ def main() -> None:
             keep_open_seconds=max(0.0, args.keep_open_seconds),
             url=str(args.url or ""),
             force=bool(args.force),
+            dry_run=bool(args.dry_run),
         )
     )
 

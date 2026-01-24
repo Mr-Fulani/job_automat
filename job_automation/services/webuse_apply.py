@@ -82,7 +82,7 @@ class WebUseApplyService(ApplyServiceInterface):
         if not any(isinstance(h, logging.StreamHandler) for h in self.logger.handlers):
             self.logger.addHandler(stream_handler)
 
-    async def apply_with_page(self, page: Page, url: str, message: str = "") -> dict:
+    async def apply_with_page(self, page: Page, url: str, message: str = "", dry_run: bool = False) -> dict:
         try:
             self.logger.info(f"Начало отклика на вакансию: {url}")
 
@@ -155,8 +155,12 @@ class WebUseApplyService(ApplyServiceInterface):
                 await self._save_screenshot(page, "response_form_loaded")
 
                 self.logger.info("Заполнение формы отклика...")
-                success = await self._fill_application_form(page, profile, message)
+                success = await self._fill_application_form(page, profile, message, dry_run=dry_run)
                 if success:
+                    if dry_run:
+                        self._save_processed_vacancy(url, "dry_run", "dry-run: form filled (not submitted)", profile.full_name)
+                        return {"status": "dry_run", "message": "dry-run: form filled (not submitted)"}
+
                     self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
                     return {"status": "success", "message": "application submitted"}
 
@@ -174,9 +178,12 @@ class WebUseApplyService(ApplyServiceInterface):
             self.logger.info("Поиск кнопки 'Откликнуться'...")
             await self._click_apply_button(page)
 
-            modal_opened = await self._handle_modal_response(page, profile, message)
+            modal_opened = await self._handle_modal_response(page, profile, message, dry_run=dry_run)
             if modal_opened:
                 self.logger.info("Обработка модального окна завершена")
+                if dry_run:
+                    self._save_processed_vacancy(url, "dry_run", "dry-run: modal flow completed (not submitted)", profile.full_name)
+                    return {"status": "dry_run", "message": "dry-run: modal flow completed (not submitted)"}
                 self._save_processed_vacancy(url, "success", "application submitted via modal", profile.full_name)
                 return {"status": "success", "message": "application submitted via modal"}
             self.logger.info("Кнопка 'Откликнуться' нажата")
@@ -185,9 +192,13 @@ class WebUseApplyService(ApplyServiceInterface):
             await self._save_screenshot(page, "after_apply_click")
 
             self.logger.info("Заполнение формы отклика...")
-            success = await self._fill_application_form(page, profile, message)
+            success = await self._fill_application_form(page, profile, message, dry_run=dry_run)
 
             if success:
+                if dry_run:
+                    self._save_processed_vacancy(url, "dry_run", "dry-run: form filled (not submitted)", profile.full_name)
+                    return {"status": "dry_run", "message": "dry-run: form filled (not submitted)"}
+
                 self.logger.info("Форма успешно заполнена и отправлена")
                 await asyncio.sleep(5)
                 self._save_processed_vacancy(url, "success", "application submitted", profile.full_name)
@@ -274,7 +285,7 @@ class WebUseApplyService(ApplyServiceInterface):
 
         return CandidateProfile(**profile_data)
     
-    async def apply(self, url: str, message: str = "") -> dict:
+    async def apply(self, url: str, message: str = "", dry_run: bool = False) -> dict:
         """
         Основной метод отклика на вакансию через Web-Use + GPT-4o.
 
@@ -298,7 +309,7 @@ class WebUseApplyService(ApplyServiceInterface):
         from .browser import browser_manager
         async with browser_manager.get_page(use_session=True) as page:
             self.logger.info("Браузерная страница создана")
-            return await self.apply_with_page(page, url, message)
+            return await self.apply_with_page(page, url, message, dry_run=dry_run)
     
     async def _is_captcha_present(self, page: Page) -> bool:
         """Проверка наличия капчи на странице."""
@@ -375,7 +386,7 @@ class WebUseApplyService(ApplyServiceInterface):
             pass
         raise Exception("Кнопка отклика не найдена")
     
-    async def _fill_application_form(self, page: Page, profile: CandidateProfile, custom_message: str) -> bool:
+    async def _fill_application_form(self, page: Page, profile: CandidateProfile, custom_message: str, dry_run: bool = False) -> bool:
         """Заполнение формы отклика с помощью GPT-4o."""
         
         # Формирование сопроводительного письма
@@ -390,7 +401,7 @@ class WebUseApplyService(ApplyServiceInterface):
         try:
             # Здесь будет интеграция с Web-Use
             # Временно используем базовую логику заполнения
-            return await self._basic_form_fill(page, profile, cover_letter)
+            return await self._basic_form_fill(page, profile, cover_letter, dry_run=dry_run)
             
         except Exception as e:
             self.logger.error(f"Ошибка заполнения формы: {str(e)}")
@@ -428,7 +439,7 @@ class WebUseApplyService(ApplyServiceInterface):
 Заполняй только поля, которые найдешь на странице. Не придумывай данные.
 """.strip()
     
-    async def _basic_form_fill(self, page: Page, profile: CandidateProfile, cover_letter: str):
+    async def _basic_form_fill(self, page: Page, profile: CandidateProfile, cover_letter: str, dry_run: bool = False):
         """
         Базовое заполнение формы отклика с поддержкой вопросов работодателя.
 
@@ -668,6 +679,14 @@ class WebUseApplyService(ApplyServiceInterface):
 
         # Небольшая пауза перед финальными действиями
         await page.wait_for_timeout(1000)
+
+        if dry_run:
+            try:
+                await self._save_screenshot(page, "dry_run_before_submit")
+            except Exception:
+                pass
+            self.logger.info("[dry-run] submit skipped")
+            return True
         
         # Нажатие кнопки отправки
         submit_selectors = [
@@ -1424,7 +1443,7 @@ class WebUseApplyService(ApplyServiceInterface):
         except:
             return ""
 
-    async def _handle_modal_response(self, page: Page, profile: CandidateProfile, custom_message: str) -> bool:
+    async def _handle_modal_response(self, page: Page, profile: CandidateProfile, custom_message: str, dry_run: bool = False) -> bool:
         """
         Обработка модального окна для простых откликов без дополнительных вопросов.
 
@@ -1486,11 +1505,7 @@ class WebUseApplyService(ApplyServiceInterface):
                         if custom_message:
                             cover_letter = custom_message
                         else:
-                            cover_letter = profile.cover_letter_template.format(
-                                experience_years=profile.experience_years,
-                                position=profile.position,
-                                skills=", ".join(profile.skills[:3])
-                            )
+                            cover_letter = self._format_answer_template(profile.cover_letter_template, profile)
                         await textarea.fill(cover_letter)
                         self.logger.info(f"✅ Сопроводительное письмо добавлено в модальном окне: '{cover_letter[:50]}...'")
                         cover_letter_added = True
@@ -1541,11 +1556,7 @@ class WebUseApplyService(ApplyServiceInterface):
                             if custom_message:
                                 cover_letter = custom_message
                             else:
-                                cover_letter = profile.cover_letter_template.format(
-                                    experience_years=profile.experience_years,
-                                    position=profile.position,
-                                    skills=", ".join(profile.skills[:3])
-                                )
+                                cover_letter = self._format_answer_template(profile.cover_letter_template, profile)
                             await textarea.fill(cover_letter)
                             self.logger.info(f"✅ Сопроводительное письмо добавлено в модальном окне: '{cover_letter[:50]}...'")
                             cover_letter_added = True
@@ -1567,6 +1578,13 @@ class WebUseApplyService(ApplyServiceInterface):
                 try:
                     submit_button = await page.query_selector(selector)
                     if submit_button and await submit_button.is_visible():
+                        if dry_run:
+                            try:
+                                await self._save_screenshot(page, "dry_run_modal_before_submit")
+                            except Exception:
+                                pass
+                            self.logger.info("[dry-run] modal submit skipped")
+                            return True
                         self.logger.info(f"Найдена и нажимается кнопка отправки в модальном окне: {selector}")
                         await submit_button.click()
                         await page.wait_for_timeout(2000)

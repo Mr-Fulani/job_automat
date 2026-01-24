@@ -241,9 +241,19 @@ python -m hh_automation.server
 
 Для локального тестирования отклика через Playwright (видимый браузер / повторные прогоны) используйте `run_local_automation.py`.
 
+**Dry-run (без отправки отклика):**
+- Открывает и заполняет форму отклика, но **не нажимает submit**
+- Возвращает статус `dry_run`
+- В режиме `--dry-run` статус `dry_run` считается как "успех" для лимита `--max-success`/`--success` (чтобы ограничивать число прогонов)
+
 **Отклик по одной вакансии (прямая ссылка):**
 ```bash
 python run_local_automation.py --url "https://hh.ru/vacancy/123456" --message "Здравствуйте! ..." --keep-open 30
+```
+
+**Отклик по одной вакансии в dry-run режиме (не отправляет отклик):**
+```bash
+python run_local_automation.py --dry-run --url "https://hh.ru/vacancy/123456" --message "Здравствуйте! ..." --keep-open 30
 ```
 
 **Форсировать повторный отклик по уже обработанной вакансии:**
@@ -254,6 +264,11 @@ python run_local_automation.py --url "https://hh.ru/vacancy/123456" --force --me
 **Отклик на несколько вакансий по поиску:**
 ```bash
 python run_local_automation.py --query "Python разработчик" --pages 2 --max 10 --delay 3 --message "Здравствуйте! ..."
+```
+
+**Отклик на несколько вакансий по поиску от имени пользователя (multi-user) + dry-run:**
+```bash
+python run_local_automation.py --user-id zloy --dry-run --query "Python разработчик" --pages 1 --max 3 --delay 3 --max-success 1
 ```
 
 **Оставить браузер открытым после выполнения (секунды):**
@@ -279,6 +294,11 @@ python run_local_automation.py --cleanup-logs --logs-keep-days 7 --logs-keep-fil
 **Пример: 3 успешных отклика, затем пауза 120 секунд, повторять бесконечно:**
 ```bash
 python run_cycle_automation.py --query "Python разработчик" --pages 2 --max 20 --batch-success 3 --pause 120 --delay 3 --message "Здравствуйте! ..."
+```
+
+**Dry-run цикл (заполняет формы, но не отправляет) + видимый браузер:**
+```bash
+BROWSER_HEADLESS=false python run_cycle_automation.py --dry-run --query "Python разработчик" --pages 1 --max 3 --batch-success 1 --pause 120 --delay 3
 ```
 
 **Ограничить количеством циклов (например 5):**
@@ -326,6 +346,16 @@ chmod +x ./start-project.sh
 ./start-project.sh --visible
 ```
 
+Dry-run (без отправки отклика):
+```bash
+./start-project.sh --visible --dry-run
+```
+
+Запуск от имени пользователя (multi-user) — использует файлы из `data/users/<slug>/...`:
+```bash
+./start-project.sh --user-id zloy --visible --dry-run
+```
+
 Все логи запуска дополнительно пишутся в файл:
 `logs/run_cycle_YYYY-MM-DD_HH-MM-SS.log`
 
@@ -333,6 +363,15 @@ chmod +x ./start-project.sh
 ```bash
 ./start-project.sh --success 10 --pause 3600 --query "Python разработчик" --pages 2 --max 50 --delay 3
 ```
+
+#### Bot protection / captcha
+
+Если при поиске/переходе на страницы HH сработала защита (captcha), сервис поиска может завершиться ошибкой.
+В этом случае сохраняются артефакты для диагностики:
+- `data/debug/bot_protection_search_YYYYmmdd_HHMMSS.png`
+- `data/debug/bot_protection_search_YYYYmmdd_HHMMSS.html`
+
+Открой их локально, чтобы увидеть, что именно показал HH (капча/проверка/редирект).
 
 ## Admin UI (профили пользователей)
 
