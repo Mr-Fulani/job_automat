@@ -286,6 +286,45 @@ python run_cycle_automation.py --query "Python разработчик" --pages 2
 python run_cycle_automation.py --cycles 5 --batch-success 3 --pause 120
 ```
 
+#### Запуск проекта одной командой + логи в реальном времени
+
+Скрипт `run_project.py` запускает API сервер и выводит логи в консоль:
+- `[server]` — stdout сервера
+- `[webuse]` — tail файла `logs/webuse_YYYY-MM-DD.log`
+
+**Запуск:**
+```bash
+python3 run_project.py
+```
+
+**Выключить tail webuse-логов:**
+```bash
+python3 run_project.py --no-tail-webuse
+```
+
+#### Запуск цикла откликов одной командой (10 успехов -> пауза 1 час -> снова)
+
+Скрипт `start-project.sh` запускает циклический режим откликов.
+По умолчанию:
+- 10 успешных откликов за цикл
+- пауза 3600 секунд (1 час)
+- бесконечные циклы
+
+Сначала сделай его исполняемым:
+```bash
+chmod +x ./start-project.sh
+```
+
+Запуск:
+```bash
+./start-project.sh
+```
+
+Пример с параметрами:
+```bash
+./start-project.sh --success 10 --pause 3600 --query "Python разработчик" --pages 2 --max 50 --delay 3
+```
+
 ## API Endpoints
 
 ### GET /search
