@@ -32,3 +32,13 @@ Desktop.ini
 !data/candidate_profile.json
 !data/common_questions.json
 !job_automation/resources/common_questions.json
+
+# Playwright screenshots / debug artifacts
+logs/
+!logs/.gitkeep
+logs/*.png
+
+# Local debug scripts / backups
+diagnose_*.py
+test_*.py
+job_automation/services/*.backup*

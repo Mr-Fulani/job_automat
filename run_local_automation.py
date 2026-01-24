@@ -13,6 +13,62 @@ from job_automation.services.apply import VacancyApplyService
 from job_automation.services.webuse_apply import WebUseApplyService
 
 
+def _cleanup_logs(logs_dir: Path, keep_days: int, keep_files: int) -> tuple[int, int]:
+    if not logs_dir.exists() or not logs_dir.is_dir():
+        return 0, 0
+
+    keep_days = max(0, int(keep_days))
+    keep_files = max(0, int(keep_files))
+
+    cutoff_ts: float | None = None
+    if keep_days > 0:
+        cutoff_ts = (datetime.now().timestamp() - (keep_days * 24 * 60 * 60))
+
+    candidates: list[Path] = []
+    for p in logs_dir.iterdir():
+        if not p.is_file():
+            continue
+        if p.name == ".gitkeep":
+            continue
+        if p.suffix.lower() not in {".png", ".log"}:
+            continue
+        candidates.append(p)
+
+    deleted = 0
+    total_bytes = 0
+
+    if cutoff_ts is not None:
+        for p in list(candidates):
+            try:
+                st = p.stat()
+                if st.st_mtime < cutoff_ts:
+                    total_bytes += int(st.st_size)
+                    p.unlink(missing_ok=True)
+                    deleted += 1
+                    candidates.remove(p)
+            except Exception:
+                continue
+
+    if keep_files > 0 and len(candidates) > keep_files:
+        def _mtime(path: Path) -> float:
+            try:
+                return float(path.stat().st_mtime)
+            except Exception:
+                return 0.0
+
+        candidates_sorted = sorted(candidates, key=_mtime, reverse=True)
+        for p in candidates_sorted[keep_files:]:
+            try:
+                st = p.stat()
+                total_bytes += int(st.st_size)
+                p.unlink(missing_ok=True)
+                deleted += 1
+            except Exception:
+                continue
+
+    return deleted, total_bytes
+
+
 class ProcessedVacanciesStore:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -205,9 +261,17 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=3.0)
     parser.add_argument("--message", type=str, default="")
     parser.add_argument("--keep-open", dest="keep_open_seconds", type=float, default=0.0)
+    parser.add_argument("--cleanup-logs", action="store_true")
+    parser.add_argument("--logs-keep-days", type=int, default=7)
+    parser.add_argument("--logs-keep-files", type=int, default=200)
 
     args = parser.parse_args()
     settings = get_settings()
+
+    if args.cleanup_logs:
+        deleted, total_bytes = _cleanup_logs(Path("logs"), keep_days=args.logs_keep_days, keep_files=args.logs_keep_files)
+        if deleted:
+            print(f"[logs-cleanup] deleted={deleted} freed_bytes={total_bytes}")
 
     query = args.query or settings.default_search_text
 
